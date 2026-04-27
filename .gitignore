@@ -1,0 +1,56 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+*.swp
+*.swo
+*~
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Xcode
+DerivedData/
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+xcuserdata/
+*.xcworkspace/xcshareddata/
+
+# Swift Package Manager & Build
+.build/
+.swiftpm/
+*.xcodeproj/project.xcworkspace/
+Package.resolved
+
+# Build artifacts & distribution
+dist/
+build/
+*.app/
+
+# Claude Code & development tools
+.claude/
+.codex/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# Testing
+.coverage/
+coverage/
+*.profdata
+*.profraw
+
+# Runtime
+.lldb/
