@@ -505,15 +505,20 @@ struct ModelsView: View {
         DashboardCard(title: "Runtime Installers", icon: "shippingbox") {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Button("Refresh PATH Checks") {
+                    Button("Refresh Runtimes") {
                         coordinator.refreshRuntimeInventory()
                     }
-                    Text("Uses normal `which` checks such as `which whisper-cli` and `which llama-cli`.")
+                    Text("Checks bundled app runtimes first, then PATH and app-managed builds.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 ForEach(modelManager.runtimes) { runtime in
                     runtimeRow(runtime)
+                    if runtime.detectionSource == .bundled {
+                        Text("Bundled with Murmur. No Homebrew, Xcode, CMake, Git, or Command Line Tools are required.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     if runtime.detectionSource == .path {
                         Text("Detected on PATH. This button builds an app-managed copy; it does not modify the PATH-installed binary.")
                             .font(.caption)
@@ -590,7 +595,7 @@ struct ModelsView: View {
                 Button(runtimeButtonTitle(for: runtime)) {
                     coordinator.installRuntime(runtime.kind)
                 }
-                .disabled(runtimeInstaller.activeRuntime != nil)
+                .disabled(runtimeInstaller.activeRuntime != nil || runtime.detectionSource == .bundled)
                 if runtimeInstaller.activeRuntime == runtime.kind {
                     Button("Cancel", role: .destructive) {
                         coordinator.cancelRuntimeInstall()
@@ -740,6 +745,8 @@ struct ModelsView: View {
             return "Working…"
         }
         switch runtime.detectionSource {
+        case .bundled:
+            return "Bundled"
         case .path:
             return "Build Managed Copy"
         case .managed:

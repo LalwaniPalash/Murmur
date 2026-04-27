@@ -176,6 +176,7 @@ struct RuntimeInstallation: Identifiable, Codable, Equatable, Sendable {
     }
 
     enum DetectionSource: String, Codable, CaseIterable, Sendable {
+        case bundled
         case path
         case managed
         case unknown

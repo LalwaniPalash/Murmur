@@ -456,13 +456,22 @@ final class RuntimeInstaller: ObservableObject {
         managedPaths: [RuntimeInstallation.Kind: String]
     ) -> [RuntimeInstallation.Kind: RuntimeResolution] {
         Dictionary(uniqueKeysWithValues: RuntimeInstallation.Kind.allCases.map { kind in
+            let bundledProbe = bundledRuntimeProbe(for: kind)
             let pathProbe = pathRuntimeProbe(for: kind)
             let managedProbe = managedPaths[kind].flatMap {
                 installedRuntimeProbe(for: kind, explicitPath: $0, source: .managed)
             }
 
             let resolution: RuntimeResolution
-            if let pathProbe, pathProbe.isRunnable {
+            if let bundledProbe, bundledProbe.isRunnable {
+                resolution = RuntimeResolution(
+                    installState: .installed,
+                    path: bundledProbe.path,
+                    version: bundledProbe.version,
+                    notes: bundledProbe.notes,
+                    source: bundledProbe.source
+                )
+            } else if let pathProbe, pathProbe.isRunnable {
                 resolution = RuntimeResolution(
                     installState: .installed,
                     path: pathProbe.path,
@@ -477,6 +486,14 @@ final class RuntimeInstaller: ObservableObject {
                     version: managedProbe.version,
                     notes: managedProbe.notes,
                     source: managedProbe.source
+                )
+            } else if let bundledProbe {
+                resolution = RuntimeResolution(
+                    installState: .failed,
+                    path: bundledProbe.path,
+                    version: nil,
+                    notes: bundledProbe.notes,
+                    source: .bundled
                 )
             } else if let pathProbe {
                 resolution = RuntimeResolution(
@@ -508,6 +525,29 @@ final class RuntimeInstaller: ObservableObject {
         })
     }
 
+    private nonisolated static func bundledRuntimeProbe(for kind: RuntimeInstallation.Kind) -> RuntimeProbe? {
+        guard let resourceURL = Bundle.main.resourceURL else {
+            return nil
+        }
+
+        let runtimeRoot = resourceURL.appendingPathComponent("Runtimes", isDirectory: true)
+        for architecture in bundledRuntimeArchitectureCandidates() {
+            let candidateURL = runtimeRoot
+                .appendingPathComponent(architecture, isDirectory: true)
+                .appendingPathComponent(primaryBinaryName(for: kind))
+            guard FileManager.default.fileExists(atPath: candidateURL.path) else {
+                continue
+            }
+            return installedRuntimeProbe(
+                for: kind,
+                explicitPath: candidateURL.path,
+                source: .bundled,
+                command: "\(architecture)/\(primaryBinaryName(for: kind))"
+            )
+        }
+        return nil
+    }
+
     private nonisolated static func pathRuntimeProbe(for kind: RuntimeInstallation.Kind) -> RuntimeProbe? {
         for candidate in executableCandidates(for: kind) {
             guard let path = which(candidate) else {
@@ -526,9 +566,17 @@ final class RuntimeInstaller: ObservableObject {
     ) -> RuntimeProbe {
         do {
             let version = try validateRuntime(executablePath: explicitPath, kind: kind)
-            let notePrefix = source == .path
-                ? "Detected on PATH via `which \(command ?? primaryBinaryName(for: kind))`."
-                : "Managed runtime available at \(explicitPath)."
+            let notePrefix: String
+            switch source {
+            case .bundled:
+                notePrefix = "Bundled runtime available at \(command ?? primaryBinaryName(for: kind))."
+            case .path:
+                notePrefix = "Detected on PATH via `which \(command ?? primaryBinaryName(for: kind))`."
+            case .managed:
+                notePrefix = "Managed runtime available at \(explicitPath)."
+            case .unknown:
+                notePrefix = "Runtime available at \(explicitPath)."
+            }
             return RuntimeProbe(
                 path: explicitPath,
                 version: version,
@@ -537,14 +585,26 @@ final class RuntimeInstaller: ObservableObject {
                 isRunnable: true
             )
         } catch let error as NSError {
-            let notePrefix = source == .path
-                ? "Found on PATH via `which \(command ?? primaryBinaryName(for: kind))`, but it is not runnable."
-                : "Managed runtime exists at \(explicitPath), but it is not runnable."
+            let notePrefix: String
+            switch source {
+            case .bundled:
+                notePrefix = "Bundled runtime exists at \(command ?? primaryBinaryName(for: kind)), but it is not runnable."
+            case .path:
+                notePrefix = "Found on PATH via `which \(command ?? primaryBinaryName(for: kind))`, but it is not runnable."
+            case .managed:
+                notePrefix = "Managed runtime exists at \(explicitPath), but it is not runnable."
+            case .unknown:
+                notePrefix = "Runtime exists at \(explicitPath), but it is not runnable."
+            }
 
             let errorMessage = error.localizedDescription
             let details: String
             if errorMessage.contains("dyld") || errorMessage.contains("Library") || errorMessage.contains("libwhisper") {
-                details = "Broken dependency (missing library). Try reinstalling via: brew reinstall \(primaryBinaryName(for: kind))"
+                if source == .bundled {
+                    details = "Broken dependency (missing library). Rebuild the bundled runtime with app-relative library paths."
+                } else {
+                    details = "Broken dependency (missing library). Try reinstalling via: brew reinstall \(primaryBinaryName(for: kind))"
+                }
             } else {
                 details = errorMessage
             }
@@ -557,9 +617,17 @@ final class RuntimeInstaller: ObservableObject {
                 isRunnable: false
             )
         } catch {
-            let notePrefix = source == .path
-                ? "Found on PATH via `which \(command ?? primaryBinaryName(for: kind))`, but it is not runnable."
-                : "Managed runtime exists at \(explicitPath), but it is not runnable."
+            let notePrefix: String
+            switch source {
+            case .bundled:
+                notePrefix = "Bundled runtime exists at \(command ?? primaryBinaryName(for: kind)), but it is not runnable."
+            case .path:
+                notePrefix = "Found on PATH via `which \(command ?? primaryBinaryName(for: kind))`, but it is not runnable."
+            case .managed:
+                notePrefix = "Managed runtime exists at \(explicitPath), but it is not runnable."
+            case .unknown:
+                notePrefix = "Runtime exists at \(explicitPath), but it is not runnable."
+            }
             return RuntimeProbe(
                 path: explicitPath,
                 version: nil,
@@ -687,6 +755,16 @@ final class RuntimeInstaller: ObservableObject {
         case .llamaCPP:
             "llama-cli"
         }
+    }
+
+    private nonisolated static func bundledRuntimeArchitectureCandidates() -> [String] {
+#if arch(arm64)
+        ["arm64", "universal"]
+#elseif arch(x86_64)
+        ["x86_64", "universal"]
+#else
+        ["universal"]
+#endif
     }
 
     private nonisolated static func repositoryURL(for kind: RuntimeInstallation.Kind) -> String {

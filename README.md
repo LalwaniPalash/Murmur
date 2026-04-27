@@ -17,8 +17,8 @@ A lightweight, privacy-first dictation tool for macOS that converts speech to te
 
 - **macOS 15 or later** (Sequoia)
 - **Microphone**: Built-in or external microphone
-- **Whisper CLI**: For speech-to-text transcription (see Installation)
-- **Llama CLI** (optional): For intelligent text formatting and punctuation (improves transcription quality)
+- **Whisper runtime**: Bundled in release builds, or installable manually for development
+- **Llama runtime** (optional): Bundled in release builds, or installable manually for development
 
 ### Supported Architecture
 
@@ -31,14 +31,16 @@ Murmur runs on both Apple Silicon and Intel Macs:
 
 ### Quick Start (Recommended)
 
-Murmur can **automatically install** both whisper-cpp and llama.cpp for you if they're not already available on your system. On first launch, you can use the in-app installer:
+Release builds can include prebuilt `whisper-cli` and `llama-cli` binaries inside the app bundle, so fresh macOS installs do not need Homebrew, Xcode, CMake, Git, or Command Line Tools.
+
+On first launch:
 
 1. Launch Murmur
 2. Go to **Models > Runtime Installers**
-3. Click **Install** for each runtime you need
-4. The app will clone, build, and configure them automatically
+3. Confirm the bundled runtimes are detected
+4. Install the Whisper and Llama model files you want to use
 
-**Note:** This requires CMake (`brew install cmake`), which the app will guide you to install if missing.
+The source-build installer remains available as a development fallback when bundled runtimes are missing.
 
 ### Manual Installation (Alternative)
 
@@ -134,7 +136,7 @@ Enable or disable automatic formatting options:
 
 ### "Whisper CLI not found" or Transcription Fails
 
-Ensure `whisper-cpp` is installed:
+Open **Models > Runtime Installers** and click **Refresh Runtimes**. Release builds should show the bundled `whisper.cpp` runtime. Development builds can also use Homebrew:
 ```bash
 brew install whisper-cpp
 which whisper-cli
@@ -142,7 +144,7 @@ which whisper-cli
 
 ### Text Formatting Not Working (Llama)
 
-The app works without llama-cli but formatting features are disabled. To enable:
+The app works without llama-cli but formatting features are disabled. Release builds should show the bundled `llama.cpp` runtime. Development builds can also use Homebrew:
 ```bash
 brew install llama-cpp
 which llama-cli
