@@ -28,9 +28,10 @@ enum CLIProcessRunner {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executablePath)
         process.arguments = arguments
-        if environment.isEmpty == false {
-            process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, new in new }
-        }
+        let resolvedEnvironment = ProcessInfo.processInfo.environment
+            .merging(defaultRuntimeEnvironment(for: executablePath)) { _, new in new }
+            .merging(environment) { _, new in new }
+        process.environment = resolvedEnvironment
 
         let stdout = Pipe()
         let stderr = Pipe()
@@ -78,6 +79,27 @@ enum CLIProcessRunner {
         }
 
         return output
+    }
+
+    private static func defaultRuntimeEnvironment(for executablePath: String) -> [String: String] {
+        let executableURL = URL(fileURLWithPath: executablePath)
+        let libexecURL = executableURL.deletingLastPathComponent().appendingPathComponent("libexec", isDirectory: true)
+        guard let backendPath = preferredGGMLBackendPath(in: libexecURL) else {
+            return [:]
+        }
+        return ["GGML_BACKEND_PATH": backendPath]
+    }
+
+    private static func preferredGGMLBackendPath(in libexecURL: URL) -> String? {
+        [
+            "libggml-metal.so",
+            "libggml-cpu-apple_m4.so",
+            "libggml-cpu-apple_m2_m3.so",
+            "libggml-cpu-apple_m1.so",
+            "libggml-blas.so",
+        ]
+            .map { libexecURL.appendingPathComponent($0).path }
+            .first { FileManager.default.fileExists(atPath: $0) }
     }
 }
 

@@ -54,3 +54,7 @@ coverage/
 
 # Runtime
 .lldb/
+
+# Release runtime binaries are staged locally before packaging.
+Vendor/Runtimes/*
+!Vendor/Runtimes/README.md

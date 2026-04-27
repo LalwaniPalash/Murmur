@@ -803,6 +803,8 @@ final class RuntimeInstaller: ObservableObject {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
+        process.environment = ProcessInfo.processInfo.environment
+            .merging(defaultRuntimeEnvironment(for: executable)) { _, new in new }
 
         var stdoutReader: Pipe?
         var stderrReader: Pipe?
@@ -876,6 +878,27 @@ final class RuntimeInstaller: ObservableObject {
         }
 
         return output
+    }
+
+    private nonisolated static func defaultRuntimeEnvironment(for executablePath: String) -> [String: String] {
+        let executableURL = URL(fileURLWithPath: executablePath)
+        let libexecURL = executableURL.deletingLastPathComponent().appendingPathComponent("libexec", isDirectory: true)
+        guard let backendPath = preferredGGMLBackendPath(in: libexecURL) else {
+            return [:]
+        }
+        return ["GGML_BACKEND_PATH": backendPath]
+    }
+
+    private nonisolated static func preferredGGMLBackendPath(in libexecURL: URL) -> String? {
+        [
+            "libggml-metal.so",
+            "libggml-cpu-apple_m4.so",
+            "libggml-cpu-apple_m2_m3.so",
+            "libggml-cpu-apple_m1.so",
+            "libggml-blas.so",
+        ]
+            .map { libexecURL.appendingPathComponent($0).path }
+            .first { FileManager.default.fileExists(atPath: $0) }
     }
 }
 
