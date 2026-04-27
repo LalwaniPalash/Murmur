@@ -18,27 +18,27 @@ private let canvasSize = CGSize(width: 1024, height: 1024)
 private let iconRect = CGRect(x: 64, y: 64, width: 896, height: 896)
 private let iconCornerRadius: CGFloat = 216
 private let strokeWidth: CGFloat = 108
-private let strokeStart = CGPoint(x: 202, y: 726)
+private let strokeStart = CGPoint(x: 202, y: 306)
 private let curves = [
     CubicCurve(
-        end: CGPoint(x: 348, y: 306),
-        control1: CGPoint(x: 252, y: 726),
-        control2: CGPoint(x: 292, y: 306)
+        end: CGPoint(x: 348, y: 726),
+        control1: CGPoint(x: 252, y: 306),
+        control2: CGPoint(x: 292, y: 726)
     ),
     CubicCurve(
-        end: CGPoint(x: 512, y: 592),
-        control1: CGPoint(x: 404, y: 306),
-        control2: CGPoint(x: 456, y: 592)
+        end: CGPoint(x: 512, y: 440),
+        control1: CGPoint(x: 404, y: 726),
+        control2: CGPoint(x: 456, y: 440)
     ),
     CubicCurve(
-        end: CGPoint(x: 676, y: 306),
-        control1: CGPoint(x: 568, y: 592),
-        control2: CGPoint(x: 620, y: 306)
+        end: CGPoint(x: 676, y: 726),
+        control1: CGPoint(x: 568, y: 440),
+        control2: CGPoint(x: 620, y: 726)
     ),
     CubicCurve(
-        end: CGPoint(x: 822, y: 726),
-        control1: CGPoint(x: 732, y: 306),
-        control2: CGPoint(x: 772, y: 726)
+        end: CGPoint(x: 822, y: 306),
+        control1: CGPoint(x: 732, y: 726),
+        control2: CGPoint(x: 772, y: 306)
     ),
 ]
 
