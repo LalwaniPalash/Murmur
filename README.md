@@ -1,236 +1,125 @@
 # Murmur
 
-A lightweight, privacy-first dictation tool for macOS that converts speech to text locally on your device. Murmur integrates seamlessly with your Mac to enable voice input across any application without sending audio to cloud services.
+Murmur is a private, local-first voice-writing app for Apple Silicon Macs. Hold `fn`, speak normally or whisper, correct yourself naturally, and release. Murmur transcribes locally, removes superseded phrases and speech artifacts, verifies protected details against what was spoken, and inserts only the final text.
 
-## Features
+This repository contains a ground-up v2 rewrite targeting macOS 15 and later. The active application is `Sources/MurmurNext`. Legacy source under `Sources/Murmur` is retained as non-building reference and its data is never read, migrated, overwritten, or deleted by v2.
 
-- **Local Processing**: All audio processing and transcription happens on your Mac—no cloud uploads or internet required
-- **Accessibility First**: Designed for accessibility, enabling dictation for all users regardless of typing ability
-- **Universal Input**: Insert transcribed text directly into any application (email, documents, messaging, etc.)
-- **Intelligent Text Formatting**: Uses llama.cpp to automatically add punctuation, fix capitalization, and improve text quality
-- **Multiple Shortcuts**: Trigger dictation via keyboard shortcuts and menu bar access
-- **Audio Feedback**: Real-time audio level indicators during recording
-- **Settings & Customization**: Configure language, keyboard shortcuts, and behavior preferences
-- **Menu Bar Integration**: Convenient menu bar icon for quick access
+This is a personal side project. It works on my Mac, has a real test suite, and probably still has rough edges on hardware and applications I have not tried.
+
+## What works
+
+- Adaptive noise-floor calibration, whisper likelihood, high-pass filtering, bounded quiet-speech gain, limiting, and 16 kHz mono resampling
+- Local Whisper.cpp inference through the bundled Apple Silicon runtime
+- A sensitive verification pass for likely whispers and low-quality first-pass transcripts
+- Deterministic removal of fillers, repetitions, restarts, abandoned clauses, and explicit self-corrections
+- Grounding checks that reject invented names, numbers, URLs, paths, and identifiers
+- Dictionary terms, voice snippets, spoken punctuation, and numbered lists
+- Push-to-talk with `fn`, Command Mode with `fn` + `Control`, Escape to cancel, and menu-bar hands-free dictation
+- Focus-safe Accessibility insertion with a transactional clipboard fallback
+- Encrypted local history, personalization, settings, notes, and note revisions
+- Password-encrypted backup/restore and preview-first library import/export
+- Searchable, pinned, multi-tab Scratchpad notes with local version history
+- Model installation with HTTPS response validation, SHA-256 verification, cancellation, and atomic activation
+- Redacted diagnostics export with an explicit opt-in before private writing can be included
+
+Murmur has no account, telemetry, cloud inference fallback, subscription, or remote synchronization path. Network access is limited to a model download the user explicitly starts.
 
 ## Requirements
 
-- **macOS 15 or later** (Sequoia)
-- **Microphone**: Built-in or external microphone
-- **Whisper runtime**: Bundled in release builds, or installable manually for development
-- **Llama runtime** (optional): Bundled in release builds, or installable manually for development
+- Apple Silicon Mac (M1 or later)
+- macOS 15 or later
+- Microphone and Accessibility permission
+- A verified local Whisper model; onboarding recommends Small English and the Models page offers faster and multilingual alternatives
 
-### Supported Architecture
-
-Murmur runs on both Apple Silicon and Intel Macs:
-
-- **Apple Silicon** (ARM64 / M1, M2, M3, M4 and newer): **Recommended** — uses Metal GPU acceleration for best performance
-- **Intel** (x86_64): Fully supported — uses CPU inference (slower, but fully functional)
-
-## Installation
-
-### Quick Start (Recommended)
-
-Release builds can include prebuilt `whisper-cli` and `llama-cli` binaries inside the app bundle, so fresh macOS installs do not need Homebrew, Xcode, CMake, Git, or Command Line Tools.
-
-On first launch:
-
-1. Launch Murmur
-2. Go to **Models > Runtime Installers**
-3. Confirm the bundled runtimes are detected
-4. Install the Whisper and Llama model files you want to use
-
-The source-build installer remains available as a development fallback when bundled runtimes are missing.
-
-### Manual Installation (Alternative)
-
-If you prefer to install via Homebrew instead:
+## Build and test
 
 ```bash
-# Required for transcription
-brew install whisper-cpp
-
-# Optional for text formatting (improves quality)
-brew install llama-cpp
+swift build
+swift test
+swift build -c release --arch arm64
 ```
 
-Without llama-cpp, the app works but text formatting features are disabled. For best experience, install both via either method above.
+The Swift package builds an executable named `Murmur`. Runtime binaries and model files are intentionally not checked in.
 
-### Building Murmur from Source
+Before packaging, install CMake and stage the pinned Whisper runtime:
 
-1. Open the repository:
-   ```bash
-   cd Murmur
-   ```
-
-2. Build using Swift Package Manager:
-   ```bash
-   swift build -c release
-   ```
-
-3. The compiled binary will be available at `.build/release/Murmur`
-
-4. Move to your Applications folder:
-   ```bash
-   cp .build/release/Murmur /Applications/Murmur.app
-   ```
-
-**Note:** Building Murmur itself doesn't require CMake. The app will automatically build whisper-cpp and llama.cpp runtimes on first use via the in-app installer (see Quick Start above).
-
-### First Launch
-
-On first launch, Murmur will:
-1. Request microphone permission (required for audio capture)
-2. Verify Whisper CLI installation
-3. Show the main hub window and menu bar icon
-
-Grant microphone access when prompted to enable dictation functionality.
-
-## Usage
-
-### Starting Dictation
-
-1. **Via Keyboard Shortcut**: Configure your preferred shortcut in Settings (default: Cmd+Shift+Space)
-2. **Via Menu Bar**: Click the waveform icon in your menu bar and select "Start Recording"
-3. **Via Scratchpad**: Use the dedicated scratchpad window for testing
-
-### Recording
-
-- Speak clearly and at a normal pace
-- Audio level indicator shows input volume
-- Press the same shortcut or click Stop to end recording
-- The app automatically processes and displays the transcript
-
-### Inserting Text
-
-- After transcription completes, click "Insert" to paste the text into your active application
-- Or copy the text from the hub window to use elsewhere
-
-### Keyboard Shortcuts
-
-Configure in **Preferences > Keyboard Shortcuts**:
-
-- **Start/Stop Recording**: Cmd+Shift+Space (customizable)
-- **Insert Last Transcript**: Cmd+Shift+Return (customizable)
-- **Open Hub**: Cmd+Shift+H (customizable)
-- **Open Settings**: Cmd+, (standard macOS)
-
-## Configuration
-
-### Language Support
-
-Select your language and regional variant in **Preferences > Language**. Whisper supports 99+ languages. Your selection affects transcription accuracy and formatting.
-
-### Microphone Selection
-
-Choose from available input devices in **Preferences > Audio > Input Device**. Useful for headsets, USB microphones, or external audio interfaces.
-
-### Text Formatting
-
-Enable or disable automatic formatting options:
-- Capitalize sentences
-- Add punctuation
-- Insert spaces after punctuation
-
-## Troubleshooting
-
-### "Whisper CLI not found" or Transcription Fails
-
-Open **Models > Runtime Installers** and click **Refresh Runtimes**. Release builds should show the bundled `whisper.cpp` runtime. Development builds can also use Homebrew:
 ```bash
-brew install whisper-cpp
-which whisper-cli
+brew install cmake
+script/stage_whisper_runtime.sh
 ```
 
-### Text Formatting Not Working (Llama)
+The staging script downloads whisper.cpp v1.8.4 over HTTPS, verifies the source archive checksum, builds portable Apple Silicon backends, and writes them to the ignored `Vendor/Runtimes/arm64` directory.
 
-The app works without llama-cli but formatting features are disabled. Release builds should show the bundled `llama.cpp` runtime. Development builds can also use Homebrew:
+To create an ad-hoc signed local app bundle and DMG without launching the app:
+
 ```bash
-brew install llama-cpp
-which llama-cli
+script/build_and_run.sh package
 ```
 
-If installed but not detected, verify installation:
+Use `script/build_and_run.sh run` only when you intentionally want to build and open the application.
+
+Before uploading a DMG manually to GitHub Releases, commit your changes and run:
+
 ```bash
-/opt/homebrew/bin/llama-cli --version  # Apple Silicon
-/usr/local/bin/llama-cli --version     # Intel
+script/check_release.sh
 ```
 
-### No Microphone Input
+## First use
 
-1. Check **System Settings > Privacy & Security > Microphone** and allow Murmur
-2. Test the microphone in **Preferences > Audio**
-3. Verify the correct input device is selected
+1. Open Murmur and review the local-processing privacy explanation.
+2. Grant Microphone and Accessibility access.
+3. Install and verify the recommended English model.
+4. Focus an editable field in another app.
+5. Hold `fn`, speak or whisper, and release.
 
-### Poor Transcription Quality
+Murmur does not show or insert provisional text. The Flow Bar reports listening, whisper detection, correction, and insertion state without exposing unfinished words.
 
-- Reduce background noise
-- Speak more clearly and at a normal pace
-- Select the correct language in Preferences
-- Use a higher-quality microphone
+## Spoken corrections
 
-### App Not Responding
+Natural corrections are removed from the final result. Examples:
 
-Restart the app and check Console.app for error messages:
-```bash
-log show --predicate 'processImagePath contains "Murmur"' --level debug
-```
+- “Meet Tuesday, sorry, Wednesday” becomes “Meet Wednesday.”
+- “Send it at two, actually three” becomes “Send it at three.”
+- “We should ship—no wait—test it first” becomes “We should test it first.”
+- “The first idea is ready. Scratch that. The second idea is ready.” keeps only the second sentence.
+
+The versioned repair acceptance corpus is in `Tests/MurmurNextTests/Fixtures/repair-corpus-v1.json`.
+
+## Privacy and storage
+
+Application data lives under `Application Support/Murmur/v2`.
+
+- Sensitive database payloads use AES-GCM with a random Keychain-protected master key.
+- Search uses keyed blind-index terms; searchable plaintext is not stored beside records.
+- Raw audio is deleted after processing unless retention is explicitly enabled.
+- Deleting a retained history item also deletes its matching retained audio file.
+- Backups are encrypted with a separate password-derived key and never contain the database Keychain key.
+- Library exports contain dictionary entries, snippets, and styles—not history or notes.
 
 ## Architecture
 
-Murmur follows a modular architecture:
+- `App`: lifecycle, dependency ownership, permissions, and settings integration
+- `Audio`: microphone capture, preprocessing, adaptive speech and whisper detection
+- `Intelligence`: Whisper runtime, model installation, repair, grounding, personalization, and local commands
+- `Insertion`: target capture, revalidation, Accessibility insertion, and clipboard fallback
+- `Storage`: encrypted SQLite records, backups, and library transfer
+- `Features`: Hub, onboarding, Flow Bar, personalization, Scratchpad, and settings
+- `Support`: privacy-safe diagnostics
 
-- **App Layer** (`App/`): SwiftUI-based UI coordination and window management
-- **Services Layer** (`Services/`): Core business logic including audio capture, transcription, and text insertion
-- **Models Layer** (`Models/`): Data models and types
-- **Views Layer** (`Views/`): SwiftUI view components
+## Verification boundaries
 
-Key services:
-- `AudioTranscription`: Manages audio capture and transcription pipeline
-- `CLIProcessRunner`: Handles Whisper CLI invocation and communication
-- `Insertion`: Handles text insertion into active applications
-- `ShortcutMonitor`: Monitors system-wide keyboard shortcuts
+The unit suite covers state transitions, whisper/noise classifiers, audio normalization, correction acceptance, grounding, insertion orchestration, encrypted storage, model integrity, imports, backups, revisions, and diagnostics redaction.
 
-## Contributing
+Real microphone accuracy, application-specific Accessibility behavior, Bluetooth input changes, multi-display placement, signing, and notarization still require hardware/UI verification. Automated corpus success must not be presented as a real-world whispered word-error-rate result.
 
-Contributions are welcome! To contribute:
+## Models
 
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/your-feature`
-3. Make your changes following Swift coding guidelines
-4. Write tests for new functionality
-5. Commit with clear messages: `git commit -m "feat: describe your change"`
-6. Push and open a pull request
+The Models page can download, verify, activate, and delete Tiny, Base, Small, compact Large Turbo, and full Large Turbo variants. Downloads come from the public whisper.cpp model repository and are activated only after their complete SHA-256 digest matches Murmur's manifest.
 
-### Code Style
+Small English is the default because it is much faster than the 1.6 GB Large Turbo model on an M1 while retaining useful English dictation quality. Existing model choices are not changed automatically.
 
-- Follow [Apple Swift API Design Guidelines](https://www.swift.org/documentation/api-design-guidelines/)
-- Use `swift build` to verify compilation
-- Maintain 80%+ test coverage
-- Format with SwiftFormat before committing
+## Runtime acknowledgements and license
 
-### Testing
+Murmur bundles a local runtime built from [whisper.cpp](https://github.com/ggml-org/whisper.cpp) and GGML. The current v2 dictation path uses Whisper.cpp plus Murmur's deterministic grounded correction pipeline.
 
-Run tests with:
-```bash
-swift test
-```
-
-## License
-
-MIT License - see LICENSE file for details
-
-## Support
-
-For issues, feature requests, or questions:
-- Open an issue on GitHub
-- Check existing issues before reporting duplicates
-- Provide your macOS version and hardware architecture when reporting bugs
-
-## Acknowledgments
-
-Murmur integrates:
-- [Whisper](https://github.com/openai/whisper) via [whisper.cpp](https://github.com/ggml-org/whisper.cpp) for local speech-to-text processing
-- [llama.cpp](https://github.com/ggml-org/llama.cpp) for intelligent text formatting and enhancement
-
-Both projects are powered by [GGML](https://github.com/ggml-org/ggml), an efficient tensor library supporting CPU and GPU acceleration.
+Murmur is available under the [MIT License](LICENSE). Upstream runtime attribution is in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

@@ -12,18 +12,22 @@ let package = Package(
         .macOS(.v15)
     ],
     products: [
-        .executable(name: "Murmur", targets: ["Murmur"])
+        .executable(name: "Murmur", targets: ["MurmurNext"])
     ],
     targets: [
         .executableTarget(
-            name: "Murmur",
-            path: "Sources/Murmur",
-            swiftSettings: swiftSettings
+            name: "MurmurNext",
+            path: "Sources/MurmurNext",
+            swiftSettings: swiftSettings,
+            linkerSettings: [
+                .linkedLibrary("sqlite3")
+            ]
         ),
         .testTarget(
-            name: "MurmurTests",
-            dependencies: ["Murmur"],
-            path: "Tests/MurmurTests",
+            name: "MurmurNextTests",
+            dependencies: ["MurmurNext"],
+            path: "Tests/MurmurNextTests",
+            resources: [.copy("Fixtures")],
             swiftSettings: swiftSettings
         ),
     ]

@@ -447,7 +447,7 @@ struct PersonalizationSnapshot: Codable, Equatable, Sendable {
         ],
         dictionaryEntries: [
             DictionaryEntry(id: UUID(), phrase: "Murmur", replacement: "Murmur", context: nil),
-            DictionaryEntry(id: UUID(), phrase: "Wispr", replacement: "Wispr", context: nil),
+            DictionaryEntry(id: UUID(), phrase: "Murmur", replacement: "Murmur", context: nil),
             DictionaryEntry(id: UUID(), phrase: "snake case", replacement: "snake_case", context: .code)
         ],
         styleProfiles: [
