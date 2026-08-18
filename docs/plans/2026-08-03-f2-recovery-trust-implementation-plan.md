@@ -6,6 +6,10 @@
 
 **Feature IDs:** REC-002–010, HIST-005–007, SEC-004, TRN-012
 
+**Status:** Completed for the approved local-only F2 scope on 2026-08-03. Verification passes
+200 tests in 49 suites and every executable quality check. Remote BYOK comparison remains F3;
+the separately tracked F1 manual insertion evidence and checked benchmark baseline remain pending.
+
 ## Execution rules
 
 1. Work test-first in small slices; do not redesign unrelated UI.

@@ -27,6 +27,8 @@ final class FlowBarController: NSObject, ObservableObject, NSWindowDelegate {
     @Published private(set) var audioLevelDecibels = -96.0
     @Published private(set) var whisperLikelihood = 0.0
     @Published private(set) var message = ""
+    @Published private(set) var errorRecovery: String?
+    @Published private(set) var transformationNotice: String?
     @Published private(set) var showsAudioMovement = true
     @Published private(set) var allowsDocking = true
 
@@ -47,10 +49,18 @@ final class FlowBarController: NSObject, ObservableObject, NSWindowDelegate {
         orchestrator.$whisperLikelihood
             .sink { [weak self] in self?.whisperLikelihood = $0 }
             .store(in: &subscriptions)
-        orchestrator.$lastError
+        // The bar takes the short label, never the full sentence: its legend is set in
+        // tracked caps, which cannot carry one.
+        orchestrator.$lastErrorLabel
             .sink { [weak self] in
-                if let error = $0 { self?.message = error }
+                if let label = $0 { self?.message = label }
             }
+            .store(in: &subscriptions)
+        orchestrator.$lastErrorRecovery
+            .sink { [weak self] in self?.errorRecovery = $0 }
+            .store(in: &subscriptions)
+        orchestrator.$lastTransformationNotice
+            .sink { [weak self] in self?.transformationNotice = $0 }
             .store(in: &subscriptions)
     }
 
@@ -155,9 +165,9 @@ final class FlowBarController: NSObject, ObservableObject, NSWindowDelegate {
         return "Murmur.v2.flowBar.origin.\(number?.stringValue ?? "default")"
     }
 
-    private var panelSize: CGSize {
-        phase == .failed ? CGSize(width: 320, height: 54) : CGSize(width: 142, height: 42)
-    }
+    /// Every state shares one size, faults included. Faults now carry a short legend and
+    /// one recovery action instead of a sentence, so nothing needs a bigger housing.
+    private var panelSize: CGSize { CGSize(width: 246, height: 42) }
 }
 
 private final class FlowBarPanel: NSPanel {
@@ -181,97 +191,176 @@ private final class FlowBarPanel: NSPanel {
     }
 }
 
+/// The Flow Bar is the device, not the panel: a machined status plate that floats over
+/// whatever the user is actually writing in. It stays black-anodised in both appearances
+/// because it has to stay legible over unknown application content, and because a real
+/// recorder's status plate does not change finish with the room.
+enum Device {
+    static let plate = Color(red: 0.075, green: 0.078, blue: 0.070)
+    static let engraved = Color.white.opacity(0.92)
+    static let engravedDim = Color.white.opacity(0.55)
+    static let scribe = Color.white.opacity(0.13)
+}
+
+/// The controller-bound Flow Bar. It owns no appearance of its own — it reads live state
+/// and hands plain values to `FlowBarFace`, so every visual state can be rendered without
+/// a running dictation.
 private struct FlowBarView: View {
     @ObservedObject var controller: FlowBarController
 
     var body: some View {
-        HStack(spacing: 10) {
-            if (controller.phase == .listening || controller.phase == .calibrating)
-                && controller.showsAudioMovement {
-                AudioBars(level: controller.audioLevelDecibels, whisperLikelihood: controller.whisperLikelihood)
-            } else if controller.phase == .listening || controller.phase == .calibrating {
-                Image(systemName: "mic.fill")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.88))
-            } else if controller.phase == .finalizing || controller.phase == .inserting {
-                ProgressView().controlSize(.small).tint(.white)
+        FlowBarFace(
+            phase: controller.phase,
+            decibels: controller.audioLevelDecibels,
+            whisperLikelihood: controller.whisperLikelihood,
+            message: controller.message,
+            transformationNotice: controller.transformationNotice,
+            recovery: controller.errorRecovery,
+            showsMeter: controller.showsAudioMovement,
+            cancel: controller.cancel
+        )
+    }
+}
+
+/// The Flow Bar's face, driven entirely by values. Extracted from the controller so a
+/// state that is hard to provoke on demand — a fault, a cancellation — can still be put
+/// on screen and reviewed.
+struct FlowBarFace: View {
+    let phase: DictationPhase
+    var decibels: Double = -96
+    var whisperLikelihood: Double = 0
+    var message: String = ""
+    var transformationNotice: String? = nil
+    var recovery: String?
+    var showsMeter: Bool = true
+    var cancel: () -> Void = {}
+
+    private var isCapturing: Bool {
+        phase == .listening || phase == .calibrating
+    }
+
+    var body: some View {
+        HStack(spacing: MurmurTheme.Space.medium) {
+            Lamp(colour: lampColour, isLit: isLampLit, diameter: 7)
+                .accessibilityHidden(true)
+
+            Text(statusText.uppercased())
+                .font(MurmurFace.legend(10.5, weight: .semibold))
+                .tracking(MurmurTheme.Tracking.legend)
+                .foregroundStyle(Device.engraved)
+                .lineLimit(1)
+                .fixedSize(horizontal: phase == .failed, vertical: false)
+                .frame(width: phase == .failed ? nil : 84, alignment: .leading)
+
+            if phase == .failed {
+                Spacer(minLength: MurmurTheme.Space.small)
+                // The one action that recovers the fault, in the readout voice at
+                // sentence case. The full explanation stays on `lastError` for the Hub;
+                // a floating bar this size cannot carry a sentence legibly.
+                if let recovery {
+                    Text(recovery)
+                        .font(MurmurFace.readout(10.5, weight: .medium))
+                        .foregroundStyle(Device.engravedDim)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
             } else {
-                Image(systemName: statusIcon)
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(statusColor)
+                Spacer(minLength: MurmurTheme.Space.small)
+                MeterBlock(decibels: isCapturing && showsMeter ? decibels : -96)
             }
 
-            Text(statusText)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.92))
-                .lineLimit(controller.phase == .failed ? 2 : 1)
-
-            if controller.phase == .listening || controller.phase == .calibrating {
-                Button { controller.cancel() } label: {
+            // Always present while capturing, never hover-gated: a floating panel cannot
+            // be hovered by keyboard or VoiceOver users, and cancel must stay reachable.
+            if isCapturing {
+                Button { cancel() } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.55))
+                        .foregroundStyle(Device.engravedDim)
+                        .frame(width: 14, height: 14)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Cancel dictation")
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, MurmurTheme.Space.medium)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(
-            RoundedRectangle(cornerRadius: 21, style: .continuous)
-                .fill(Color(red: 0.09, green: 0.085, blue: 0.075).opacity(0.97))
-                .shadow(color: .black.opacity(0.24), radius: 18, y: 7)
+            RoundedRectangle(cornerRadius: MurmurTheme.Edge.flowBar, style: .continuous)
+                .fill(Device.plate)
+                .shadow(color: .black.opacity(0.32), radius: 12, x: 0, y: 4)
         )
-        .overlay {
-            RoundedRectangle(cornerRadius: 21, style: .continuous)
-                .stroke(.white.opacity(0.09))
+        .overlay(
+            RoundedRectangle(cornerRadius: MurmurTheme.Edge.flowBar, style: .continuous)
+                .strokeBorder(Device.scribe, lineWidth: 1)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Murmur: \(statusText)")
+    }
+
+    private var lampColour: Lamp.Colour {
+        switch phase {
+        case .completed: .verify
+        case .failed: .caution
+        default: .record
+        }
+    }
+
+    /// The record lamp is lit only while audio is genuinely being captured. That is the
+    /// whole promise of the product expressed as one component.
+    private var isLampLit: Bool {
+        switch phase {
+        case .listening, .calibrating, .completed, .failed: true
+        default: false
         }
     }
 
     private var statusText: String {
-        switch controller.phase {
-        case .calibrating: "Tuning in"
-        case .listening: controller.whisperLikelihood > 0.45 ? "Hearing whisper" : "Listening"
-        case .finalizing: "Correcting"
-        case .inserting: "Writing"
-        case .completed: "Inserted"
-        case .failed: controller.message.isEmpty ? "Try that again" : controller.message
+        switch phase {
+        case .calibrating: "Tuning"
+        case .listening: whisperLikelihood > 0.45 ? "Whisper" : "Listening"
+        case .finalizing: transformationNotice ?? "Correcting"
+        case .inserting: transformationNotice ?? "Writing"
+        case .completed: transformationNotice ?? "Inserted"
+        case .failed: message.isEmpty ? "Problem" : message
         case .cancelled: "Cancelled"
         case .idle: "Ready"
         }
     }
+}
 
-    private var statusIcon: String {
-        controller.phase == .completed ? "checkmark" : controller.phase == .failed ? "exclamationmark" : "xmark"
-    }
+/// A fixed-scale ladder over an engraved scale. The scale is printed once and never
+/// rescales, so the same phrase always reads at the same place on the meter.
+private struct MeterBlock: View {
+    let decibels: Double
 
-    private var statusColor: Color {
-        controller.phase == .failed ? .orange : .white.opacity(0.84)
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            LevelMeter(decibels: decibels, segments: 22, segmentHeight: 9, onDevice: true)
+            ScaleMarks()
+        }
+        .accessibilityHidden(true)
     }
 }
 
-private struct AudioBars: View {
-    let level: Double
-    let whisperLikelihood: Double
+private struct ScaleMarks: View {
+    /// Fractions of the ladder that carry a printed mark: floor, −40, −20, and the
+    /// caution point where a real meter prints its last division before clipping.
+    private let marks: [(position: Double, tall: Bool)] = [
+        (0.0, true), (0.25, false), (0.5, false), (0.82, true), (1.0, false)
+    ]
 
     var body: some View {
-        HStack(spacing: 2) {
-            ForEach(0..<4, id: \.self) { index in
-                Capsule()
-                    .fill(.white.opacity(0.88))
-                    .frame(width: 2.5, height: height(index))
-                    .animation(.easeOut(duration: 0.12), value: level)
+        GeometryReader { proxy in
+            ZStack(alignment: .topLeading) {
+                ForEach(marks.indices, id: \.self) { index in
+                    Rectangle()
+                        .fill(Device.engravedDim.opacity(marks[index].tall ? 0.85 : 0.5))
+                        .frame(width: 1, height: marks[index].tall ? 4 : 2.5)
+                        .offset(x: proxy.size.width * marks[index].position)
+                }
             }
         }
-        .frame(width: 16, height: 18)
-        .accessibilityHidden(true)
-    }
-
-    private func height(_ index: Int) -> CGFloat {
-        let normalized = min(max((level + 60) / 48, 0.08), 1)
-        let shapes = [0.55, 1.0, 0.76, 0.42]
-        let whisperBoost = whisperLikelihood > 0.45 ? 0.18 : 0
-        return 4 + CGFloat(min(normalized + whisperBoost, 1) * shapes[index] * 13)
+        .frame(height: 4)
     }
 }

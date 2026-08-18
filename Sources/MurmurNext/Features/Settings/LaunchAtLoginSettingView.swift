@@ -7,26 +7,21 @@ struct LaunchAtLoginSettingView: View {
     @State private var errorMessage = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Launch Murmur at login").font(.system(size: 13, weight: .semibold))
-                    Text("Keep voice writing ready after you sign in.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(MurmurTheme.ColorToken.secondaryInk)
+        VStack(alignment: .leading, spacing: MurmurTheme.Space.xSmall) {
+            PanelSwitch(legend: "Launch at login", isOn: $isEnabled)
+                .onChange(of: isEnabled) { _, enabled in
+                    guard isSynchronizing == false else { return }
+                    updateService(enabled: enabled)
                 }
-                Spacer()
-                Toggle("", isOn: $isEnabled)
-                    .labelsHidden()
-                    .onChange(of: isEnabled) { _, enabled in
-                        guard isSynchronizing == false else { return }
-                        updateService(enabled: enabled)
-                    }
-            }
             if errorMessage.isEmpty == false {
-                Text(errorMessage)
-                    .font(.system(size: 11))
-                    .foregroundStyle(MurmurTheme.ColorToken.danger)
+                HStack(spacing: MurmurTheme.Space.small) {
+                    Lamp(colour: .caution, isLit: true)
+                    Text(errorMessage)
+                        .font(MurmurFace.body(11.5))
+                        .foregroundStyle(MurmurTheme.Engraving.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.bottom, MurmurTheme.Space.small)
             }
         }
         .onAppear { synchronizeFromSystem() }

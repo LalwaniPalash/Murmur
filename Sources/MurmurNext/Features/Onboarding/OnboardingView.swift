@@ -1,149 +1,199 @@
 import SwiftUI
 
+/// Commissioning. Rather than four full-screen cards the user walks through blind, the
+/// whole checklist stays on the panel with a lamp against each line; the current step is
+/// the only one that opens. Progress is legible without a progress indicator.
 struct OnboardingView: View {
     @ObservedObject var permissions: PermissionCenter
     @ObservedObject var modelInstaller: WhisperModelInstaller
     let modelInstalled: Bool
     let completion: () -> Void
-    @State private var step = 0
+    @State private var step: Step = .local
+
+    enum Step: Int, CaseIterable, Identifiable {
+        case local, permissions, model, shortcut
+
+        var id: Int { rawValue }
+
+        var legend: String {
+            switch self {
+            case .local: "Local"
+            case .permissions: "Access"
+            case .model: "Model"
+            case .shortcut: "Key"
+            }
+        }
+
+        var detail: String {
+            switch self {
+            case .local: "Everything runs on this Mac. No account, no cloud, no telemetry."
+            case .permissions: "Microphone to hear you. Accessibility to write where your cursor is."
+            case .model: "One download, then Murmur works offline."
+            case .shortcut: "Hold fn, speak, release. Whisper if you need to."
+            }
+        }
+    }
 
     var body: some View {
         ZStack {
-            MurmurTheme.ColorToken.canvas.ignoresSafeArea()
-            VStack(spacing: 0) {
-                HStack(spacing: 6) {
-                    ForEach(0..<4, id: \.self) { index in
-                        Capsule()
-                            .fill(index <= step ? MurmurTheme.ColorToken.ink : MurmurTheme.ColorToken.line)
-                            .frame(width: 38, height: 3)
+            // Chassis, not panel: before the app is commissioned the user is looking at
+            // the bare device, and the checklist plate is the only thing mounted on it.
+            MurmurTheme.Finish.chassis.ignoresSafeArea()
+
+            VStack(alignment: .leading, spacing: MurmurTheme.Space.xLarge) {
+                HStack(spacing: MurmurTheme.Space.medium) {
+                    MurmurMark(scale: 1.6)
+                    Legend("Murmur", size: .title)
+                    Spacer()
+                    Legend("Commissioning", size: .micro, color: MurmurTheme.Engraving.tertiary)
+                }
+                .overlay(alignment: .bottom) { ScribeRule(strong: true, ticks: true).offset(y: 12) }
+
+                Plate(padding: 0) {
+                    VStack(spacing: 0) {
+                        ForEach(Array(Step.allCases.enumerated()), id: \.element.id) { index, item in
+                            if index > 0 { ScribeRule() }
+                            CommissionRow(
+                                step: item,
+                                isCurrent: item == step,
+                                isDone: isComplete(item),
+                                content: { controls(for: item) }
+                            )
+                        }
                     }
                 }
-                .padding(.top, 30)
 
-                Spacer()
-                Group {
-                    switch step {
-                    case 0: privacyStep
-                    case 1: permissionStep
-                    case 2: modelStep
-                    default: shortcutStep
-                    }
-                }
-                .frame(maxWidth: 580)
-                Spacer()
-
-                HStack {
-                    if step > 0 {
-                        Button("Back") { step -= 1 }
-                            .buttonStyle(MurmurSecondaryButtonStyle())
+                HStack(spacing: MurmurTheme.Space.small) {
+                    if step != .local {
+                        Button("Back") { advance(-1) }
+                            .buttonStyle(PanelButtonStyle(rank: .secondary))
                     }
                     Spacer()
-                    Button(step == 3 ? "Start using Murmur" : "Continue") {
-                        if step == 3 { completion() } else { step += 1 }
+                    Button(step == .shortcut ? "Finish" : "Continue") {
+                        if step == .shortcut { completion() } else { advance(1) }
                     }
-                    .buttonStyle(MurmurPrimaryButtonStyle())
-                    .disabled(step == 1 && permissions.requiredPermissionsGranted == false)
-                    .disabled(step == 2 && isModelReady == false)
-                }
-                .padding(30)
-            }
-        }
-        .preferredColorScheme(.light)
-    }
-
-    private var privacyStep: some View {
-        OnboardingCard(
-            icon: "waveform.and.mic",
-            eyebrow: "Welcome to Murmur",
-            title: "Your voice stays yours.",
-            message: "Murmur transcribes, corrects, and stores your words on this Mac. There is no cloud inference fallback."
-        )
-    }
-
-    private var permissionStep: some View {
-        VStack(spacing: 24) {
-            OnboardingCard(
-                icon: "hand.raised",
-                eyebrow: "Two permissions",
-                title: "Listen here. Write anywhere.",
-                message: "Microphone access lets Murmur hear you. Accessibility lets it place the final corrected text in the field you chose."
-            )
-            HStack(spacing: 12) {
-                PermissionButton(title: "Microphone", granted: permissions.microphoneGranted) {
-                    Task { await permissions.requestMicrophone() }
-                }
-                PermissionButton(title: "Accessibility", granted: permissions.accessibilityGranted) {
-                    permissions.requestAccessibilityPrompt()
+                    .buttonStyle(PanelButtonStyle(rank: .primary))
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(isComplete(step) == false)
                 }
             }
-            Button("Refresh permission status") { permissions.refresh() }
-                .buttonStyle(.plain)
-                .font(.system(size: 12, weight: .medium))
+            .frame(maxWidth: 720)
+            .padding(MurmurTheme.Space.xxLarge)
         }
     }
 
-    private var modelStep: some View {
-        VStack(spacing: 24) {
-            OnboardingCard(
-            icon: isModelReady ? "checkmark.seal" : "arrow.down.circle",
-            eyebrow: "Local intelligence",
-            title: isModelReady ? "Your model is ready." : "One model, entirely local.",
-            message: isModelReady
-                ? "Murmur found a verified English transcription model on this Mac."
-                : "Install the recommended English model now. Dictation remains offline after this one-time download."
-            )
-            if isModelReady == false {
-                modelInstallControl
-            }
-        }
+    private func advance(_ delta: Int) {
+        let next = step.rawValue + delta
+        guard let target = Step(rawValue: next) else { return }
+        step = target
     }
 
-    private var shortcutStep: some View {
-        VStack(spacing: 26) {
-            OnboardingCard(
-                icon: "keyboard",
-                eyebrow: "Your shortcut",
-                title: "Hold fn. Speak. Release.",
-                message: "Speak normally or whisper. Correct yourself naturally—Murmur inserts only the reconciled sentence after you release."
-            )
-            Text("fn")
-                .font(.system(size: 18, weight: .semibold, design: .rounded))
-                .padding(.horizontal, 22)
-                .padding(.vertical, 11)
-                .background(MurmurTheme.ColorToken.surfaceRaised)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .overlay { RoundedRectangle(cornerRadius: 10).stroke(MurmurTheme.ColorToken.line) }
+    private func isComplete(_ item: Step) -> Bool {
+        switch item {
+        case .local, .shortcut: true
+        case .permissions: permissions.requiredPermissionsGranted
+        case .model: isModelReady
         }
     }
 
     @ViewBuilder
-    private var modelInstallControl: some View {
+    private func controls(for item: Step) -> some View {
+        switch item {
+        case .local:
+            EmptyView()
+        case .permissions:
+            VStack(alignment: .leading, spacing: MurmurTheme.Space.small) {
+                PermissionLine(
+                    legend: "Microphone",
+                    granted: permissions.microphoneGranted
+                ) {
+                    Task { await permissions.requestMicrophone() }
+                }
+                PermissionLine(
+                    legend: "Accessibility",
+                    granted: permissions.accessibilityGranted
+                ) {
+                    permissions.requestAccessibilityPrompt()
+                }
+                Button("Recheck") { permissions.refresh() }
+                    .buttonStyle(PanelButtonStyle(rank: .secondary))
+                    .padding(.top, MurmurTheme.Space.xSmall)
+            }
+        case .model:
+            modelControl
+        case .shortcut:
+            HStack(spacing: MurmurTheme.Space.small) {
+                KeyCap(label: "fn")
+                Legend("hold", size: .micro, color: MurmurTheme.Engraving.tertiary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var modelControl: some View {
         switch modelInstaller.state {
         case .downloading:
-            VStack(spacing: 9) {
-                ProgressView(value: modelInstaller.progress).frame(width: 320)
-                Text("Downloading \(Int(modelInstaller.progress * 100))%")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(MurmurTheme.ColorToken.secondaryInk)
-                Button("Cancel") { modelInstaller.cancel() }
-                    .buttonStyle(.plain)
+            VStack(alignment: .leading, spacing: MurmurTheme.Space.small) {
+                HStack(spacing: MurmurTheme.Space.medium) {
+                    GeometryReader { proxy in
+                        ZStack(alignment: .leading) {
+                            Rectangle().fill(MurmurTheme.Finish.recess)
+                            Rectangle()
+                                .fill(MurmurTheme.Engraving.ink)
+                                .frame(width: proxy.size.width * min(max(modelInstaller.progress, 0), 1))
+                        }
+                    }
+                    .frame(height: 4)
+                    Text("\(Int(modelInstaller.progress * 100))%")
+                        .font(MurmurFace.readout(10))
+                        .monospacedDigit()
+                        .foregroundStyle(MurmurTheme.Engraving.secondary)
+                        .frame(width: 34, alignment: .trailing)
+                }
+                HStack {
+                    Button("Pause") { modelInstaller.pause() }.buttonStyle(PanelButtonStyle(rank: .secondary))
+                    Button("Cancel") { modelInstaller.cancel() }.buttonStyle(PanelButtonStyle(rank: .secondary))
+                }
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Downloading, \(Int(modelInstaller.progress * 100)) percent")
         case .verifying:
-            ProgressView("Verifying model…").controlSize(.small)
+            HStack(spacing: MurmurTheme.Space.small) {
+                Lamp(colour: .caution, isLit: true)
+                Legend("Verifying checksum", size: .micro, color: MurmurTheme.Engraving.secondary)
+            }
+        case .paused:
+            HStack(spacing: MurmurTheme.Space.small) {
+                Button("Resume") { modelInstaller.resume() }.buttonStyle(PanelButtonStyle(rank: .primary))
+                Button("Cancel") { modelInstaller.cancel() }.buttonStyle(PanelButtonStyle(rank: .secondary))
+                Legend("Download paused", size: .micro, color: MurmurTheme.Engraving.secondary)
+            }
         case .failed(let message):
-            VStack(spacing: 10) {
-                Text(message)
-                    .font(.system(size: 12))
-                    .foregroundStyle(MurmurTheme.ColorToken.danger)
-                    .multilineTextAlignment(.center)
-                Button("Try again") { modelInstaller.install(.smallEnglish) }
-                    .buttonStyle(MurmurPrimaryButtonStyle())
+            VStack(alignment: .leading, spacing: MurmurTheme.Space.small) {
+                HStack(alignment: .top, spacing: MurmurTheme.Space.small) {
+                    Lamp(colour: .caution, isLit: true)
+                        .padding(.top, 3)
+                    Text(message)
+                        .font(MurmurFace.body(12))
+                        .foregroundStyle(MurmurTheme.Engraving.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Button("Retry") { modelInstaller.install(.smallEnglish) }
+                    .buttonStyle(PanelButtonStyle(rank: .primary))
             }
         case .idle, .installed:
-            Button("Install recommended model · 488 MB") {
-                modelInstaller.install(.smallEnglish)
+            if isModelReady {
+                HStack(spacing: MurmurTheme.Space.small) {
+                    Lamp(colour: .verify, isLit: true)
+                    Legend("Verified and ready", size: .micro, color: MurmurTheme.Engraving.secondary)
+                }
+            } else {
+                HStack(spacing: MurmurTheme.Space.medium) {
+                    Button("Install") { modelInstaller.install(.smallEnglish) }
+                        .buttonStyle(PanelButtonStyle(rank: .primary))
+                    Legend("Small English · 488 MB", size: .micro, color: MurmurTheme.Engraving.tertiary)
+                }
             }
-            .buttonStyle(MurmurPrimaryButtonStyle())
         }
     }
 
@@ -154,60 +204,82 @@ struct OnboardingView: View {
     }
 }
 
-private struct OnboardingCard: View {
-    let icon: String
-    let eyebrow: String
-    let title: String
-    let message: String
+// MARK: - Parts
+
+private struct CommissionRow<Content: View>: View {
+    let step: OnboardingView.Step
+    let isCurrent: Bool
+    let isDone: Bool
+    @ViewBuilder var content: Content
 
     var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: icon)
-                .font(.system(size: 28, weight: .medium))
-                .foregroundStyle(MurmurTheme.ColorToken.ink)
-                .frame(width: 62, height: 62)
-                .background(MurmurTheme.ColorToken.sidebar)
-                .clipShape(Circle())
-            Text(eyebrow.uppercased())
-                .font(.system(size: 10, weight: .bold))
-                .tracking(1.5)
-                .foregroundStyle(MurmurTheme.ColorToken.tertiaryInk)
-            Text(title)
-                .font(.system(size: 34, weight: .semibold, design: .rounded))
-                .multilineTextAlignment(.center)
-                .foregroundStyle(MurmurTheme.ColorToken.ink)
-            Text(message)
-                .font(.system(size: 15))
-                .multilineTextAlignment(.center)
-                .foregroundStyle(MurmurTheme.ColorToken.secondaryInk)
-                .lineSpacing(3)
+        VStack(alignment: .leading, spacing: MurmurTheme.Space.medium) {
+            HStack(spacing: MurmurTheme.Space.medium) {
+                Lamp(colour: .verify, isLit: isDone)
+                Legend(
+                    step.legend,
+                    size: .control,
+                    color: isCurrent ? MurmurTheme.Engraving.ink : MurmurTheme.Engraving.tertiary
+                )
+                Spacer(minLength: 0)
+            }
+
+            if isCurrent {
+                Text(step.detail)
+                    .font(MurmurFace.body(12.5))
+                    .foregroundStyle(MurmurTheme.Engraving.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                content
+            }
         }
+        .padding(.horizontal, MurmurTheme.Space.large)
+        .padding(.vertical, MurmurTheme.Space.large)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(isCurrent ? MurmurTheme.Finish.seat.opacity(0.4) : .clear)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(step.legend), \(isDone ? "done" : "not done")")
     }
 }
 
-private struct PermissionButton: View {
-    let title: String
+private struct PermissionLine: View {
+    let legend: String
     let granted: Bool
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            HStack {
-                Image(systemName: granted ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(granted ? MurmurTheme.ColorToken.success : MurmurTheme.ColorToken.tertiaryInk)
-                Text(title)
-                Spacer()
-                Text(granted ? "Ready" : "Allow")
-                    .foregroundStyle(MurmurTheme.ColorToken.tertiaryInk)
+        HStack(spacing: MurmurTheme.Space.medium) {
+            Lamp(colour: .verify, isLit: granted)
+            Legend(legend, size: .control, color: MurmurTheme.Engraving.secondary)
+            Spacer(minLength: MurmurTheme.Space.medium)
+            if granted {
+                Legend("Granted", size: .micro, color: MurmurTheme.Lamp.verify)
+            } else {
+                Button("Allow", action: action)
+                    .buttonStyle(PanelButtonStyle(rank: .secondary))
             }
-            .font(.system(size: 13, weight: .semibold))
-            .padding(.horizontal, 14)
-            .frame(width: 220, height: 46)
-            .background(MurmurTheme.ColorToken.surfaceRaised)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .overlay { RoundedRectangle(cornerRadius: 10).stroke(MurmurTheme.ColorToken.line) }
         }
-        .buttonStyle(.plain)
-        .disabled(granted)
+    }
+}
+
+/// An engraved key cap. The one place the shortcut is shown at size, because it is the
+/// only thing the user has to remember.
+private struct KeyCap: View {
+    let label: String
+
+    var body: some View {
+        Text(label)
+            .font(MurmurFace.readout(13, weight: .medium))
+            .foregroundStyle(MurmurTheme.Engraving.ink)
+            .padding(.horizontal, MurmurTheme.Space.large)
+            .padding(.vertical, MurmurTheme.Space.small)
+            .background(
+                RoundedRectangle(cornerRadius: MurmurTheme.Edge.control, style: .continuous)
+                    .fill(MurmurTheme.Finish.plate)
+                    .shadow(color: .black.opacity(0.16), radius: 2, x: 0, y: 1)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: MurmurTheme.Edge.control, style: .continuous)
+                    .strokeBorder(MurmurTheme.Engraving.scribeStrong, lineWidth: MurmurTheme.Space.hairline)
+            )
     }
 }

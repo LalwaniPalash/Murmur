@@ -1,0 +1,160 @@
+{
+  "format": "murmur-insertion-matrix",
+  "records": [
+    {
+      "applicationName": "Apple Notes",
+      "applicationVersion": "pending",
+      "bundleIdentifier": "com.apple.Notes",
+      "controlType": "nativeTextView",
+      "notes": "Manual verification pending.",
+      "outcome": "untested",
+      "recovery": "notNeeded",
+      "strategy": "none",
+      "verification": "unknown"
+    },
+    {
+      "applicationName": "Google Chrome",
+      "applicationVersion": "pending",
+      "bundleIdentifier": "com.google.Chrome",
+      "controlType": "browserTextArea",
+      "notes": "Manual verification pending.",
+      "outcome": "untested",
+      "recovery": "notNeeded",
+      "strategy": "none",
+      "verification": "unknown"
+    },
+    {
+      "applicationName": "Google Chrome",
+      "applicationVersion": "pending",
+      "bundleIdentifier": "com.google.Chrome",
+      "controlType": "chromiumContentEditable",
+      "notes": "Manual verification pending.",
+      "outcome": "untested",
+      "recovery": "notNeeded",
+      "strategy": "none",
+      "verification": "unknown"
+    },
+    {
+      "applicationName": "Java or Qt application",
+      "applicationVersion": "pending",
+      "bundleIdentifier": "manual.java-or-qt",
+      "controlType": "javaOrQt",
+      "notes": "Representative target and manual verification pending.",
+      "outcome": "untested",
+      "recovery": "notNeeded",
+      "strategy": "none",
+      "verification": "unknown"
+    },
+    {
+      "applicationName": "Microsoft Remote Desktop",
+      "applicationVersion": "pending",
+      "bundleIdentifier": "com.microsoft.rdc.macos",
+      "controlType": "remoteDesktop",
+      "notes": "Manual verification pending.",
+      "outcome": "untested",
+      "recovery": "notNeeded",
+      "strategy": "none",
+      "verification": "unknown"
+    },
+    {
+      "applicationName": "Microsoft Word",
+      "applicationVersion": "pending",
+      "bundleIdentifier": "com.microsoft.Word",
+      "controlType": "officeDocument",
+      "notes": "Manual verification pending.",
+      "outcome": "untested",
+      "recovery": "notNeeded",
+      "strategy": "none",
+      "verification": "unknown"
+    },
+    {
+      "applicationName": "Native text field fixture",
+      "applicationVersion": "system",
+      "bundleIdentifier": "manual.native-text-field",
+      "controlType": "nativeTextField",
+      "notes": "Manual verification pending.",
+      "outcome": "untested",
+      "recovery": "notNeeded",
+      "strategy": "none",
+      "verification": "unknown"
+    },
+    {
+      "applicationName": "Password field",
+      "applicationVersion": "system",
+      "bundleIdentifier": "manual.secure-input",
+      "controlType": "secureInput",
+      "notes": "Verify fail-safe behavior without recording field contents.",
+      "outcome": "untested",
+      "recovery": "notNeeded",
+      "strategy": "none",
+      "verification": "unknown"
+    },
+    {
+      "applicationName": "Safari",
+      "applicationVersion": "pending",
+      "bundleIdentifier": "com.apple.Safari",
+      "controlType": "browserTextArea",
+      "notes": "Manual verification pending.",
+      "outcome": "untested",
+      "recovery": "notNeeded",
+      "strategy": "none",
+      "verification": "unknown"
+    },
+    {
+      "applicationName": "Slack",
+      "applicationVersion": "pending",
+      "bundleIdentifier": "com.tinyspeck.slackmacgap",
+      "controlType": "chromiumContentEditable",
+      "notes": "Manual verification pending.",
+      "outcome": "untested",
+      "recovery": "notNeeded",
+      "strategy": "none",
+      "verification": "unknown"
+    },
+    {
+      "applicationName": "SwiftUI fixture",
+      "applicationVersion": "system",
+      "bundleIdentifier": "manual.swiftui-fixture",
+      "controlType": "swiftUITextEditor",
+      "notes": "Manual verification pending.",
+      "outcome": "untested",
+      "recovery": "notNeeded",
+      "strategy": "none",
+      "verification": "unknown"
+    },
+    {
+      "applicationName": "Terminal",
+      "applicationVersion": "pending",
+      "bundleIdentifier": "com.apple.Terminal",
+      "controlType": "terminal",
+      "notes": "Manual verification pending.",
+      "outcome": "untested",
+      "recovery": "notNeeded",
+      "strategy": "none",
+      "verification": "unknown"
+    },
+    {
+      "applicationName": "TextEdit",
+      "applicationVersion": "pending",
+      "bundleIdentifier": "com.apple.TextEdit",
+      "controlType": "nativeTextView",
+      "notes": "Manual verification pending.",
+      "outcome": "untested",
+      "recovery": "notNeeded",
+      "strategy": "none",
+      "verification": "unknown"
+    },
+    {
+      "applicationName": "Visual Studio Code",
+      "applicationVersion": "pending",
+      "bundleIdentifier": "com.microsoft.VSCode",
+      "controlType": "chromiumContentEditable",
+      "notes": "Manual verification pending.",
+      "outcome": "untested",
+      "recovery": "notNeeded",
+      "strategy": "none",
+      "verification": "unknown"
+    }
+  ],
+  "version": 1
+}

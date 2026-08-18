@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "professional-paragraphs-preserve-details",
+      "source": "Hi Ananya, please review the VSPIR proposal at https://example.com/vspir by August 12, 2026. The approved budget is ₹45,000. Please send comments to palash@example.com. Thanks, Palash.",
+      "candidate": "Hi Ananya,\n\nPlease review the VSPIR proposal at https://example.com/vspir by August 12, 2026. The approved budget is ₹45,000.\n\nPlease send comments to palash@example.com.\n\nThanks,\nPalash",
+      "operation": "professionalEmail",
+      "protectedTerms": ["VSPIR"],
+      "expectedValid": true
+    },
+    {
+      "id": "missing-final-commitment-detail",
+      "source": "Confirm delivery to ops@example.com by September 3, 2026 for $2,400.",
+      "candidate": "Please confirm delivery to ops@example.com by September 3, 2026.",
+      "operation": "professionalEmail",
+      "protectedTerms": [],
+      "expectedValid": false
+    },
+    {
+      "id": "invented-recipient",
+      "source": "Send the update to owner@example.com.",
+      "candidate": "Please send the update to owner@example.com and finance@example.com.",
+      "operation": "professionalEmail",
+      "protectedTerms": [],
+      "expectedValid": false
+    }
+  ]
+}

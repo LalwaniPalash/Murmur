@@ -72,6 +72,13 @@ cp "$BUILD_DIR/ggml/src/libggml.0.9.8.dylib" "$STAGE_DIR/lib/libggml.0.dylib"
 cp "$BUILD_DIR/ggml/src/libggml-base.0.9.8.dylib" "$STAGE_DIR/lib/libggml-base.0.dylib"
 cp "$SOURCE_DIR/LICENSE" "$STAGE_DIR/LICENSE.whisper.cpp.txt"
 
+# Murmur links libwhisper in-process so the model stays resident between dictations.
+# The linker resolves -lwhisper / -lggml / -lggml-base by unversioned name, so stage
+# development symlinks alongside the versioned install names the dylibs carry.
+ln -sf "libwhisper.1.dylib"   "$STAGE_DIR/lib/libwhisper.dylib"
+ln -sf "libggml.0.dylib"      "$STAGE_DIR/lib/libggml.dylib"
+ln -sf "libggml-base.0.dylib" "$STAGE_DIR/lib/libggml-base.dylib"
+
 plugin_count=0
 for plugin in "$BUILD_DIR/bin"/libggml-*.so; do
   [[ -f "$plugin" ]] || continue
@@ -103,6 +110,8 @@ remove_absolute_rpaths "$STAGE_DIR/whisper-cli"
 install_name_tool -add_rpath "@executable_path/lib" "$STAGE_DIR/whisper-cli"
 
 for library in "$STAGE_DIR/lib"/*.dylib; do
+  # Skip the unversioned development symlinks so each real dylib is rewritten once.
+  [[ -L "$library" ]] && continue
   remove_absolute_rpaths "$library"
   install_name_tool -add_rpath "@loader_path" "$library"
 done

@@ -32,6 +32,11 @@ enum SecureRecordCollection: String, Sendable {
     case noteRevisions
     case profiles
     case modelInventory
+    case sourceSessions
+    case resultVersions
+    case retainedAudio
+    case recoveryJournals
+    case preferredResults
 }
 
 enum SecureRecordStoreError: Error, LocalizedError {
@@ -39,6 +44,7 @@ enum SecureRecordStoreError: Error, LocalizedError {
     case databaseOperation(String)
     case keychain(OSStatus)
     case malformedCiphertext
+    case invalidSessionResultGraph(String)
 
     var errorDescription: String? {
         switch self {
@@ -46,6 +52,7 @@ enum SecureRecordStoreError: Error, LocalizedError {
         case .databaseOperation(let message): "Murmur's local database could not complete an operation: \(message)"
         case .keychain(let status): "Murmur could not access its encryption key (\(status))."
         case .malformedCiphertext: "An encrypted local record is damaged or incomplete."
+        case .invalidSessionResultGraph(let message): "Murmur's session history is invalid: \(message)"
         }
     }
 }
@@ -219,6 +226,182 @@ actor SecureRecordStore {
         }
     }
 
+    func append(
+        session: SourceSessionRecord,
+        firstResult: TranscriptResultVersion
+    ) throws {
+        guard firstResult.sessionID == session.id else {
+            throw SecureRecordStoreError.invalidSessionResultGraph(
+                "The first result does not belong to its source session."
+            )
+        }
+        guard firstResult.parentResultID == nil else {
+            throw SecureRecordStoreError.invalidSessionResultGraph(
+                "The first result cannot have a parent."
+            )
+        }
+        let sessionRecord = try encodeRecord(session, collection: .sourceSessions, searchableText: "")
+        let resultRecord = try encodeRecord(
+            firstResult,
+            collection: .resultVersions,
+            searchableText: "\(firstResult.rawTranscript) \(firstResult.finalTranscript)"
+        )
+        try execute("BEGIN IMMEDIATE TRANSACTION")
+        do {
+            try insert(sessionRecord)
+            try insert(resultRecord)
+            try execute("COMMIT")
+        } catch {
+            try? execute("ROLLBACK")
+            throw error
+        }
+    }
+
+    func append(result: TranscriptResultVersion) throws {
+        guard try recordExists(id: result.sessionID, collection: .sourceSessions) else {
+            throw SecureRecordStoreError.invalidSessionResultGraph(
+                "The result references a missing source session."
+            )
+        }
+        if let parentID = result.parentResultID {
+            guard let parent: TranscriptResultVersion = try fetchRecord(
+                id: parentID,
+                collection: .resultVersions
+            ) else {
+                throw SecureRecordStoreError.invalidSessionResultGraph(
+                    "The result references a missing parent."
+                )
+            }
+            guard parent.sessionID == result.sessionID else {
+                throw SecureRecordStoreError.invalidSessionResultGraph(
+                    "The result parent belongs to another source session."
+                )
+            }
+        }
+        let record = try encodeRecord(
+            result,
+            collection: .resultVersions,
+            searchableText: "\(result.rawTranscript) \(result.finalTranscript)"
+        )
+        try execute("BEGIN IMMEDIATE TRANSACTION")
+        do {
+            try insert(record)
+            try execute("COMMIT")
+        } catch {
+            try? execute("ROLLBACK")
+            throw error
+        }
+    }
+
+    func fetchSourceSessions() throws -> [SourceSessionRecord] {
+        try fetch(collection: .sourceSessions)
+    }
+
+    func fetchResultVersions(matching query: String? = nil) throws -> [TranscriptResultVersion] {
+        try fetch(collection: .resultVersions, matching: query)
+    }
+
+    func saveRetainedAudio(_ record: RetainedAudioRecord) throws {
+        try save(record, collection: .retainedAudio)
+    }
+
+    func fetchRetainedAudio() throws -> [RetainedAudioRecord] {
+        try fetch(collection: .retainedAudio)
+    }
+
+    func deleteRetainedAudio(id: UUID) throws {
+        try delete(id: id, collection: .retainedAudio)
+    }
+
+    func saveRecoveryJournal(_ record: RecoveryJournalRecord) throws {
+        try save(record, collection: .recoveryJournals)
+    }
+
+    func fetchRecoveryJournals() throws -> [RecoveryJournalRecord] {
+        try fetch(collection: .recoveryJournals)
+    }
+
+    func deleteRecoveryJournal(id: UUID) throws {
+        try delete(id: id, collection: .recoveryJournals)
+    }
+
+    func savePreferredResult(_ record: PreferredResultRecord) throws {
+        guard let result: TranscriptResultVersion = try fetchRecord(
+            id: record.resultID,
+            collection: .resultVersions
+        ), result.sessionID == record.sessionID else {
+            throw SecureRecordStoreError.invalidSessionResultGraph(
+                "The preferred result does not belong to its source session."
+            )
+        }
+        try save(record, collection: .preferredResults)
+    }
+
+    func fetchPreferredResults() throws -> [PreferredResultRecord] {
+        try fetch(collection: .preferredResults)
+    }
+
+    func fetchVersionedHistory(matching query: String? = nil) throws -> [TranscriptRecord] {
+        let sessions = try fetchSourceSessions()
+        let allResults = try fetchResultVersions()
+        let preferredBySession = Dictionary(
+            uniqueKeysWithValues: try fetchPreferredResults().map { ($0.sessionID, $0.resultID) }
+        )
+        let includedSessionIDs: Set<UUID>
+        if let query, query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            includedSessionIDs = Set(try fetchResultVersions(matching: query).map(\.sessionID))
+        } else {
+            includedSessionIDs = Set(sessions.map(\.id))
+        }
+        return try sessions
+            .filter { includedSessionIDs.contains($0.id) }
+            .map {
+                try SessionResultProjection.history(
+                    session: $0,
+                    results: allResults,
+                    preferredResultID: preferredBySession[$0.id]
+                )
+            }
+            .sorted { $0.createdAt > $1.createdAt }
+    }
+
+    func schemaVersion() throws -> Int {
+        let statement = try prepare("SELECT version FROM schema_metadata LIMIT 1")
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW else { throw operationError() }
+        return Int(sqlite3_column_int(statement, 0))
+    }
+
+    func migrateHistoryToVersionedRecordsIfNeeded() throws {
+        guard try schemaVersion() < 2 else { return }
+        let legacy: [TranscriptRecord] = try fetch(collection: .history)
+        let converted = legacy.map(LegacySessionResultConverter.convert)
+        let records = try converted.flatMap { conversion in
+            [
+                try encodeRecord(
+                    conversion.session,
+                    collection: .sourceSessions,
+                    searchableText: ""
+                ),
+                try encodeRecord(
+                    conversion.result,
+                    collection: .resultVersions,
+                    searchableText: "\(conversion.result.rawTranscript) \(conversion.result.finalTranscript)"
+                ),
+            ]
+        }
+
+        try execute("BEGIN IMMEDIATE TRANSACTION")
+        do {
+            for record in records { try insert(record) }
+            try execute("UPDATE schema_metadata SET version = 2")
+            try execute("COMMIT")
+        } catch {
+            try? execute("ROLLBACK")
+            throw error
+        }
+    }
+
     func fetch<Value: Decodable & Sendable>(
         collection: SecureRecordCollection,
         matching query: String? = nil,
@@ -275,12 +458,24 @@ actor SecureRecordStore {
     func delete(id: UUID, collection: SecureRecordCollection) throws {
         try execute("BEGIN IMMEDIATE TRANSACTION")
         do {
-            try deleteSearchTerms(id: id, collection: collection)
-            let statement = try prepare("DELETE FROM secure_records WHERE collection = ? AND id = ?")
-            defer { sqlite3_finalize(statement) }
-            try bind(collection.rawValue, at: 1, to: statement)
-            try bind(id.uuidString, at: 2, to: statement)
-            try stepDone(statement)
+            try deleteRecord(id: id, collection: collection)
+            try execute("COMMIT")
+        } catch {
+            try? execute("ROLLBACK")
+            throw error
+        }
+    }
+
+    func deleteSession(id: UUID) throws {
+        let resultIDs = try fetchResultVersions().filter { $0.sessionID == id }.map(\.id)
+        try execute("BEGIN IMMEDIATE TRANSACTION")
+        do {
+            for resultID in resultIDs {
+                try deleteRecord(id: resultID, collection: .resultVersions)
+            }
+            try deleteRecord(id: id, collection: .sourceSessions)
+            try deleteRecord(id: id, collection: .preferredResults)
+            try deleteRecord(id: id, collection: .history)
             try execute("COMMIT")
         } catch {
             try? execute("ROLLBACK")
@@ -289,6 +484,35 @@ actor SecureRecordStore {
     }
 
     func restore(_ backup: MurmurBackupPayload) throws {
+        let restoredSessions: [SourceSessionRecord]
+        let restoredResults: [TranscriptResultVersion]
+        if backup.sourceSessions.isEmpty && backup.resultVersions.isEmpty {
+            let conversions = backup.history.map(LegacySessionResultConverter.convert)
+            restoredSessions = conversions.map(\.session)
+            restoredResults = conversions.map(\.result)
+        } else {
+            restoredSessions = backup.sourceSessions
+            restoredResults = backup.resultVersions
+        }
+        do {
+            try SessionResultGraphValidator.validate(
+                sessions: restoredSessions,
+                results: restoredResults
+            )
+        } catch {
+            throw SecureRecordStoreError.invalidSessionResultGraph(error.localizedDescription)
+        }
+        let restoredResultsByID = Dictionary(uniqueKeysWithValues: restoredResults.map { ($0.id, $0) })
+        guard Set(backup.preferredResults.map(\.sessionID)).count == backup.preferredResults.count,
+              backup.preferredResults.allSatisfy({ preference in
+                  restoredResultsByID[preference.resultID]?.sessionID == preference.sessionID
+              })
+        else {
+            throw SecureRecordStoreError.invalidSessionResultGraph(
+                "A preferred result does not belong to its source session."
+            )
+        }
+
         var records: [EncodedRecord] = []
         records += try backup.history.map {
             try encodeRecord($0, collection: .history, searchableText: "\($0.sourceApplication) \($0.text)")
@@ -309,9 +533,23 @@ actor SecureRecordStore {
             try encodeRecord($0, collection: .noteRevisions, searchableText: "")
         }
         records.append(try encodeRecord(backup.settings, collection: .settings, searchableText: ""))
+        records += try restoredSessions.map {
+            try encodeRecord($0, collection: .sourceSessions, searchableText: "")
+        }
+        records += try restoredResults.map {
+            try encodeRecord(
+                $0,
+                collection: .resultVersions,
+                searchableText: "\($0.rawTranscript) \($0.finalTranscript)"
+            )
+        }
+        records += try backup.preferredResults.map {
+            try encodeRecord($0, collection: .preferredResults, searchableText: "")
+        }
 
         let replacedCollections: [SecureRecordCollection] = [
             .settings, .history, .dictionary, .snippets, .styles, .notes, .noteRevisions,
+            .sourceSessions, .resultVersions, .preferredResults,
         ]
         try execute("BEGIN IMMEDIATE TRANSACTION")
         do {
@@ -327,6 +565,7 @@ actor SecureRecordStore {
                 }
             }
             for record in records { try insert(record) }
+            try execute("UPDATE schema_metadata SET version = 2")
             try execute("COMMIT")
         } catch {
             try? execute("ROLLBACK")
@@ -390,6 +629,46 @@ actor SecureRecordStore {
         try bind(collection.rawValue, at: 1, to: statement)
         try bind(id.uuidString, at: 2, to: statement)
         try stepDone(statement)
+    }
+
+    private func deleteRecord(id: UUID, collection: SecureRecordCollection) throws {
+        try deleteSearchTerms(id: id, collection: collection)
+        let statement = try prepare("DELETE FROM secure_records WHERE collection = ? AND id = ?")
+        defer { sqlite3_finalize(statement) }
+        try bind(collection.rawValue, at: 1, to: statement)
+        try bind(id.uuidString, at: 2, to: statement)
+        try stepDone(statement)
+    }
+
+    private func recordExists(id: UUID, collection: SecureRecordCollection) throws -> Bool {
+        let statement = try prepare(
+            "SELECT 1 FROM secure_records WHERE collection = ? AND id = ? LIMIT 1"
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(collection.rawValue, at: 1, to: statement)
+        try bind(id.uuidString, at: 2, to: statement)
+        let result = sqlite3_step(statement)
+        guard result == SQLITE_ROW || result == SQLITE_DONE else { throw operationError() }
+        return result == SQLITE_ROW
+    }
+
+    private func fetchRecord<Value: Decodable>(
+        id: UUID,
+        collection: SecureRecordCollection
+    ) throws -> Value? {
+        let statement = try prepare(
+            "SELECT payload FROM secure_records WHERE collection = ? AND id = ? LIMIT 1"
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(collection.rawValue, at: 1, to: statement)
+        try bind(id.uuidString, at: 2, to: statement)
+        let result = sqlite3_step(statement)
+        if result == SQLITE_DONE { return nil }
+        guard result == SQLITE_ROW, let bytes = sqlite3_column_blob(statement, 0) else {
+            throw operationError()
+        }
+        let count = Int(sqlite3_column_bytes(statement, 0))
+        return try codec.decrypt(Data(bytes: bytes, count: count))
     }
 
     private func execute(_ sql: String) throws {
@@ -489,6 +768,11 @@ actor SecureRecordStore {
         case let value as SnippetItem: value.createdAt
         case let value as ScratchpadNote: value.createdAt
         case let value as ScratchpadRevision: value.createdAt
+        case let value as SourceSessionRecord: value.startedAt
+        case let value as TranscriptResultVersion: value.createdAt
+        case let value as RetainedAudioRecord: value.createdAt
+        case let value as RecoveryJournalRecord: value.updatedAt
+        case let value as PreferredResultRecord: value.updatedAt
         case is MurmurSettingsRecord: Date(timeIntervalSince1970: 0)
         default: Date()
         }

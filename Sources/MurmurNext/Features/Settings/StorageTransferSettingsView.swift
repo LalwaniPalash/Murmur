@@ -12,54 +12,71 @@ struct StorageTransferSettingsView: View {
     @State private var isWorking = false
 
     var body: some View {
-        VStack(spacing: 12) {
-            MurmurCard {
-                VStack(alignment: .leading, spacing: 14) {
-                    Text("Personal library")
-                        .font(.system(size: 14, weight: .semibold))
-                    Text("Share dictionary terms, snippets, and writing styles without including history or notes.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(MurmurTheme.ColorToken.secondaryInk)
-                    HStack {
-                        Button("Import library…", action: importLibrary)
-                            .buttonStyle(MurmurSecondaryButtonStyle())
-                        Button("Export library…", action: exportLibrary)
-                            .buttonStyle(MurmurSecondaryButtonStyle())
+        VStack(alignment: .leading, spacing: MurmurTheme.Space.large) {
+            PanelSection(
+                legend: "Library",
+                note: "Terms, snippets, and styles. Never history or notes."
+            ) {
+                Plate {
+                    HStack(spacing: MurmurTheme.Space.small) {
+                        Button("Import", action: importLibrary)
+                            .buttonStyle(PanelButtonStyle(rank: .secondary))
+                        Button("Export", action: exportLibrary)
+                            .buttonStyle(PanelButtonStyle(rank: .secondary))
                     }
                 }
             }
 
-            MurmurCard {
-                VStack(alignment: .leading, spacing: 14) {
-                    Text("Encrypted backup")
-                        .font(.system(size: 14, weight: .semibold))
-                    Text("Includes history, personalization, notes, and settings. The password cannot be recovered by Murmur.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(MurmurTheme.ColorToken.secondaryInk)
-                    SecureField("Backup password (12+ characters)", text: $backupPassword)
-                        .textFieldStyle(.roundedBorder)
-                    HStack {
-                        Button("Restore backup…", action: chooseBackupToRestore)
-                            .buttonStyle(MurmurSecondaryButtonStyle())
-                        Button("Create backup…", action: createBackup)
-                            .buttonStyle(MurmurPrimaryButtonStyle())
+            PanelSection(
+                legend: "Backup",
+                note: "History, personalization, notes, and settings. Murmur cannot recover this password."
+            ) {
+                Plate {
+                    VStack(alignment: .leading, spacing: MurmurTheme.Space.medium) {
+                        VStack(alignment: .leading, spacing: MurmurTheme.Space.small) {
+                            Legend("Password", size: .micro, color: MurmurTheme.Engraving.tertiary)
+                            SecureField("12 characters or more", text: $backupPassword)
+                                .textFieldStyle(.plain)
+                                .font(MurmurFace.body(13))
+                                .foregroundStyle(MurmurTheme.Engraving.ink)
+                                .padding(.horizontal, MurmurTheme.Space.small)
+                                .padding(.vertical, MurmurTheme.Space.small)
+                                .background(
+                                    RoundedRectangle(cornerRadius: MurmurTheme.Edge.control, style: .continuous)
+                                        .fill(
+                                            MurmurTheme.Finish.recess
+                                                .shadow(.inner(color: .black.opacity(0.18), radius: 2, x: 0, y: 1))
+                                        )
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: MurmurTheme.Edge.control, style: .continuous)
+                                        .strokeBorder(
+                                            MurmurTheme.Engraving.scribe,
+                                            lineWidth: MurmurTheme.Space.hairline
+                                        )
+                                )
+                                .accessibilityLabel("Backup password")
+                        }
+
+                        HStack(spacing: MurmurTheme.Space.small) {
+                            Button("Restore", action: chooseBackupToRestore)
+                                .buttonStyle(PanelButtonStyle(rank: .secondary))
+                            Button("Create", action: createBackup)
+                                .buttonStyle(PanelButtonStyle(rank: .primary))
+                            if isWorking {
+                                ProgressView().controlSize(.small)
+                            }
+                        }
+                        .disabled(backupPassword.utf8.count < 12 || isWorking)
                     }
-                    .disabled(backupPassword.utf8.count < 12 || isWorking)
-                    if isWorking { ProgressView().controlSize(.small) }
                 }
             }
 
             if message.isEmpty == false {
-                Label(message, systemImage: "checkmark.circle.fill")
-                    .font(.system(size: 12))
-                    .foregroundStyle(MurmurTheme.ColorToken.success)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                StatusLine(text: message, lamp: .verify)
             }
             if errorMessage.isEmpty == false {
-                Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 12))
-                    .foregroundStyle(MurmurTheme.ColorToken.danger)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                StatusLine(text: errorMessage, lamp: .caution)
             }
         }
         .alert("Import this library?", isPresented: libraryAlertBinding) {

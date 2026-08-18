@@ -1,10 +1,16 @@
 import AppKit
 import Combine
 import Foundation
+import OSLog
 
 @MainActor
 final class AppEnvironment: ObservableObject {
-    @Published var selectedDestination: HubDestination = .home
+    private static let logger = Logger(subsystem: "Murmur", category: "Transcription")
+
+    @Published var selectedDestination: HubDestination = .record
+    /// Set when a note is chosen outside the Scratchpad window, so opening the window
+    /// lands on that note instead of falling back to the most recent one.
+    @Published var requestedScratchpadNote: UUID?
     @Published private(set) var history: [TranscriptRecord] = []
     @Published private(set) var dictionary: [DictionaryItem] = []
     @Published private(set) var snippets: [SnippetItem] = []
@@ -17,27 +23,94 @@ final class AppEnvironment: ObservableObject {
     @Published private(set) var hasCompletedOnboarding: Bool
     @Published private(set) var settings: MurmurSettingsRecord = .default
     @Published private(set) var verifiedWhisperModelIdentifiers: Set<String> = []
+    @Published private(set) var recoveryItems: [RecoveryItem] = []
+    @Published private(set) var retainedAudioSessionIDs: Set<UUID> = []
+    @Published private(set) var isCaptureOwner = false
+    @Published private(set) var providerCredentialIdentifiers: Set<String> = []
+    @Published private(set) var isLocalWritingModelInstalled = false
+    @Published private(set) var installedLocalWritingModelIdentifiers: Set<String> = []
+    @Published private(set) var isWritingSetupBusy = false
+    @Published private(set) var writingSetupMessage: String?
 
     let permissionCenter = PermissionCenter()
     let modelInstaller = WhisperModelInstaller()
+    let localWritingModelTransfer = LocalWritingModelTransfer()
+    private let transcriptionEngine: any LocalTranscriptionEngine
+    private let modelProvider: any WhisperModelProviding
     private var store: SecureRecordStore?
+    private var retentionCoordinator: RetentionCoordinator?
+    private var recoveryCoordinator: RecoveryCoordinator?
+    private var sourceSessions: [SourceSessionRecord] = []
+    private var resultVersions: [TranscriptResultVersion] = []
+    private var preferredResults: [PreferredResultRecord] = []
+    private var retainedAudioPlayback: RetainedAudioPlayback?
+    private var issueBundleService: IssueBundleService?
     private let shortcutMonitor = GlobalShortcutMonitor()
+    private let instanceLock = AppInstanceLock(
+        url: MurmurV2Paths.rootDirectory.appendingPathComponent("capture-owner.lock")
+    )
     private var shortcutsStarted = false
     private var subscriptions: Set<AnyCancellable> = []
+    private var transcriptionWarmupTask: Task<Void, Never>?
+
+    private lazy var writingRouter = WritingTransformationRouter(
+        openAIEngine: OpenAITextTransformationEngine(),
+        compatibleEngine: OpenAITextTransformationEngine(
+            baseURL: nil,
+            acceptedRoute: .openAICompatible
+        ),
+        localEngine: LocalMLXTextTransformationEngine()
+    )
 
     lazy var dictationOrchestrator = DictationOrchestrator(
         audioInput: SystemAudioInput(),
-        transcriptionEngine: WhisperCLITranscriptionEngine(),
-        modelProvider: InstalledWhisperModelProvider(),
+        transcriptionEngine: transcriptionEngine,
+        modelProvider: modelProvider,
         insertionService: TextInsertionCoordinator(),
+        writingRouter: writingRouter,
         configuration: { [weak self] in
-            DictationRuntimeConfiguration(settings: self?.settings ?? .default)
+            DictationRuntimeConfiguration(
+                settings: self?.settings ?? .default,
+                installedLocalWritingModelIdentifiers: self?.installedLocalWritingModelIdentifiers ?? []
+            )
         },
         personalization: { [weak self] in
             (self?.dictionary ?? [], self?.snippets ?? [])
         },
-        historyHandler: { [weak self] record in
-            self?.addHistoryRecord(record)
+        historyHandler: { _ in },
+        sessionResultHandler: { [weak self] session, result in
+            guard let self else { return }
+            try await self.commit(session: session, firstResult: result)
+        },
+        retentionSessionFactory: { [weak self] sessionID, policy, createdAt in
+            guard policy.isEnabled, let coordinator = self?.retentionCoordinator else { return nil }
+            return BackgroundAudioRetentionSession(
+                coordinator: coordinator,
+                sessionID: sessionID,
+                policy: policy,
+                sampleRate: 16_000,
+                createdAt: createdAt,
+                errorHandler: { [weak self] message in
+                    Task { @MainActor in self?.persistenceError = message }
+                },
+                completionHandler: { [weak self] sessionID in
+                    Task { @MainActor in self?.retainedAudioSessionIDs.insert(sessionID) }
+                }
+            )
+        },
+        recoverySessionFactory: { [weak self] sessionID, app, bundleID, hasAudio, startedAt in
+            guard let coordinator = self?.recoveryCoordinator else { return nil }
+            return BackgroundRecoveryJournalSession(
+                coordinator: coordinator,
+                sessionID: sessionID,
+                targetApplication: app,
+                targetBundleIdentifier: bundleID,
+                retainedAudioAvailable: hasAudio,
+                startedAt: startedAt,
+                errorHandler: { [weak self] message in
+                    Task { @MainActor in self?.persistenceError = message }
+                }
+            )
         }
     )
 
@@ -45,6 +118,8 @@ final class AppEnvironment: ObservableObject {
 
     init() {
         hasCompletedOnboarding = UserDefaults.standard.bool(forKey: "Murmur.v2.onboardingCompleted")
+        transcriptionEngine = Self.makeTranscriptionEngine()
+        modelProvider = InstalledWhisperModelProvider()
         configureShortcuts()
         modelInstaller.$state
             .sink { [weak self] state in
@@ -53,7 +128,14 @@ final class AppEnvironment: ObservableObject {
                     guard let self else { return }
                     await self.refreshVerifiedWhisperModels()
                     self.activateWhisperModel(identifier: manifest.id)
+                    self.scheduleTranscriptionWarmup()
                 }
+            }
+            .store(in: &subscriptions)
+        localWritingModelTransfer.$state
+            .sink { [weak self] state in
+                guard state == .installed else { return }
+                Task { @MainActor in await self?.refreshWritingSetupState() }
             }
             .store(in: &subscriptions)
     }
@@ -70,11 +152,30 @@ final class AppEnvironment: ObservableObject {
         guard isLoaded == false, store == nil else { return }
         do {
             try MurmurV2Paths.prepareDirectories()
+            isCaptureOwner = try instanceLock.acquire()
             let key = try await KeychainMasterKeyStore.shared.loadOrCreateKey()
             let store = try SecureRecordStore(url: MurmurV2Paths.databaseURL, key: key)
             self.store = store
+            let retentionCoordinator = RetentionCoordinator(
+                vault: EncryptedAudioVault(
+                    rootURL: MurmurV2Paths.retainedAudioDirectory,
+                    masterKey: key
+                ),
+                store: store
+            )
+            self.retentionCoordinator = retentionCoordinator
+            retainedAudioPlayback = RetainedAudioPlayback(retention: retentionCoordinator)
+            issueBundleService = IssueBundleService(retention: retentionCoordinator)
+            let recoveryCoordinator = RecoveryCoordinator(
+                store: store,
+                retention: retentionCoordinator
+            )
+            self.recoveryCoordinator = recoveryCoordinator
+            try await store.migrateHistoryToVersionedRecordsIfNeeded()
 
-            async let storedHistory: [TranscriptRecord] = store.fetch(collection: .history)
+            async let storedHistory = store.fetchVersionedHistory()
+            async let storedSessions = store.fetchSourceSessions()
+            async let storedResults = store.fetchResultVersions()
             async let storedDictionary: [DictionaryItem] = store.fetch(collection: .dictionary)
             async let storedSnippets: [SnippetItem] = store.fetch(collection: .snippets)
             async let storedStyles: [WritingStyle] = store.fetch(collection: .styles)
@@ -83,6 +184,8 @@ final class AppEnvironment: ObservableObject {
             async let storedSettings: [MurmurSettingsRecord] = store.fetch(collection: .settings, limit: 1)
             let loaded = try await (
                 storedHistory,
+                storedSessions,
+                storedResults,
                 storedDictionary,
                 storedSnippets,
                 storedStyles,
@@ -91,10 +194,14 @@ final class AppEnvironment: ObservableObject {
                 storedSettings
             )
             history = loaded.0
-            dictionary = loaded.1
-            snippets = loaded.2
-            styles = Self.mergeStyles(stored: loaded.3)
-            let storedStyleIDs = Set(loaded.3.map(\.id))
+            sourceSessions = loaded.1
+            resultVersions = loaded.2
+            preferredResults = try await store.fetchPreferredResults()
+            retainedAudioSessionIDs = Set(try await store.fetchRetainedAudio().map(\.id))
+            dictionary = loaded.3
+            snippets = loaded.4
+            styles = Self.mergeStyles(stored: loaded.5)
+            let storedStyleIDs = Set(loaded.5.map(\.id))
             for style in styles where storedStyleIDs.contains(style.id) == false {
                 try await store.save(
                     style,
@@ -102,15 +209,23 @@ final class AppEnvironment: ObservableObject {
                     searchableText: "\(style.name) \(style.instructions)"
                 )
             }
-            notes = loaded.4
-            noteRevisions = loaded.5
-            settings = loaded.6.first ?? .default
-            await refreshVerifiedWhisperModels()
+            notes = loaded.6
+            noteRevisions = loaded.7
+            settings = loaded.8.first ?? .default
+            await refreshWritingSetupState()
+            _ = try await retentionCoordinator.migrateLegacyRecordings(
+                policy: settings.audioRetentionPolicy
+            )
+            try await retentionCoordinator.reconcileOrphanedCiphertext()
+            _ = try await retentionCoordinator.purgeExpired(at: Date())
+            retainedAudioSessionIDs = Set(try await store.fetchRetainedAudio().map(\.id))
+            recoveryItems = try await recoveryCoordinator.reconcile()
             isLoaded = true
             permissionCenter.refresh()
             _ = flowBarController
             flowBarController.apply(settings: settings)
             startShortcutsIfPossible()
+            scheduleTranscriptionWarmup()
         } catch {
             persistenceError = error.localizedDescription
         }
@@ -125,6 +240,122 @@ final class AppEnvironment: ObservableObject {
 
     func clearPresentedError() {
         persistenceError = nil
+    }
+
+    func hasProviderCredential(_ providerIdentifier: String) -> Bool {
+        providerCredentialIdentifiers.contains(providerIdentifier)
+    }
+
+    func saveProviderCredential(_ credential: String, providerIdentifier: String) async {
+        isWritingSetupBusy = true
+        writingSetupMessage = nil
+        defer { isWritingSetupBusy = false }
+        do {
+            try await ProviderCredentialStore.shared.save(
+                credential,
+                providerIdentifier: providerIdentifier
+            )
+            providerCredentialIdentifiers.insert(providerIdentifier)
+            writingSetupMessage = "Key saved in Keychain"
+        } catch {
+            writingSetupMessage = error.localizedDescription
+        }
+    }
+
+    func deleteProviderCredential(providerIdentifier: String) async {
+        isWritingSetupBusy = true
+        writingSetupMessage = nil
+        defer { isWritingSetupBusy = false }
+        do {
+            try await ProviderCredentialStore.shared.delete(providerIdentifier: providerIdentifier)
+            providerCredentialIdentifiers.remove(providerIdentifier)
+            writingSetupMessage = "Key removed"
+        } catch {
+            writingSetupMessage = error.localizedDescription
+        }
+    }
+
+    func testSelectedWritingProvider() async {
+        let writing = settings.writing
+        guard writing.route == .openAI || writing.route == .openAICompatible else {
+            writingSetupMessage = "Select a BYOK provider first"
+            return
+        }
+        isWritingSetupBusy = true
+        writingSetupMessage = nil
+        defer { isWritingSetupBusy = false }
+
+        var testSettings = writing
+        testSettings.remoteEmailTextAllowed = true
+        let descriptor = TargetApplicationDescriptor(
+            processIdentifier: 0,
+            bundleIdentifier: "app.murmur.setup-check",
+            localizedName: "Murmur setup check",
+            writingContext: .email
+        )
+        let policy = WritingPolicyResolver().resolve(
+            settings: testSettings,
+            target: descriptor,
+            mode: .pushToTalk
+        )
+        guard policy.shouldTransform else {
+            writingSetupMessage = "Complete the provider URL and model first"
+            return
+        }
+        let request = WritingTransformationRequest(
+            sourceText: "Murmur provider setup check.",
+            spokenInstruction: nil,
+            operation: .professionalEmail,
+            applicationCategory: "Setup check",
+            policy: policy
+        )
+        do {
+            let engine: any WritingTextTransformationEngine = writing.route == .openAI
+                ? OpenAITextTransformationEngine()
+                : OpenAITextTransformationEngine(baseURL: nil, acceptedRoute: .openAICompatible)
+            _ = try await engine.transform(request)
+            writingSetupMessage = "Connection verified"
+        } catch {
+            writingSetupMessage = error.localizedDescription
+        }
+    }
+
+    func installLocalWritingModel(_ manifest: LocalWritingModelManifest = .qwen3_0_6B_4Bit) async {
+        localWritingModelTransfer.install(manifest)
+        writingSetupMessage = nil
+    }
+
+    func removeLocalWritingModel(_ manifest: LocalWritingModelManifest? = nil) async {
+        guard isWritingSetupBusy == false else { return }
+        isWritingSetupBusy = true
+        writingSetupMessage = nil
+        defer { isWritingSetupBusy = false }
+        do {
+            if let manifest { localWritingModelTransfer.select(manifest) }
+            try localWritingModelTransfer.remove()
+            await refreshWritingSetupState()
+            writingSetupMessage = "Local writing model removed"
+        } catch {
+            writingSetupMessage = error.localizedDescription
+        }
+    }
+
+    func refreshWritingSetupState() async {
+        var credentials: Set<String> = []
+        for identifier in ["openai", "openai-compatible"] {
+            if (try? await ProviderCredentialStore.shared.contains(providerIdentifier: identifier)) == true {
+                credentials.insert(identifier)
+            }
+        }
+        providerCredentialIdentifiers = credentials
+        let installed = await Task.detached(priority: .utility) {
+            let catalog = LocalWritingModelCatalog()
+            return Set(LocalWritingModelManifest.supported.compactMap { manifest in
+                (try? catalog.verifiedModelDirectory(identifier: manifest.id)) == nil ? nil : manifest.id
+            })
+        }.value
+        installedLocalWritingModelIdentifiers = installed
+        isLocalWritingModelInstalled = installed.contains(settings.writing.localModelIdentifier)
     }
 
     var hasInstalledWhisperModel: Bool {
@@ -146,6 +377,7 @@ final class AppEnvironment: ObservableObject {
     func activateWhisperModel(identifier: String) {
         guard verifiedWhisperModelIdentifiers.contains(identifier) else { return }
         updateSettings { $0.preferredWhisperModelIdentifier = identifier }
+        scheduleTranscriptionWarmup()
     }
 
     func removeWhisperModel(_ manifest: WhisperDownloadManifest) async throws {
@@ -170,6 +402,10 @@ final class AppEnvironment: ObservableObject {
     }
 
     func beginDictation(mode: DictationMode = .pushToTalk) {
+        guard isCaptureOwner else {
+            persistenceError = "Another Murmur window owns microphone shortcuts. Use that window to dictate."
+            return
+        }
         do {
             try dictationOrchestrator.begin(mode: mode)
         } catch {
@@ -188,6 +424,10 @@ final class AppEnvironment: ObservableObject {
             guard self?.settings.commandModeEnabled == true else { return }
             self?.beginDictation(mode: .command)
         }
+        shortcutMonitor.onCommandUpgrade = { [weak self] in
+            guard self?.settings.commandModeEnabled == true else { return false }
+            return self?.dictationOrchestrator.promoteActiveSessionToCommand() == true
+        }
         shortcutMonitor.onCommandReleased = { [weak self] in
             Task { await self?.dictationOrchestrator.finish() }
         }
@@ -197,7 +437,10 @@ final class AppEnvironment: ObservableObject {
     }
 
     private func startShortcutsIfPossible() {
-        guard shortcutsStarted == false, permissionCenter.accessibilityGranted else { return }
+        guard isCaptureOwner,
+              shortcutsStarted == false,
+              permissionCenter.accessibilityGranted
+        else { return }
         shortcutsStarted = shortcutMonitor.start()
     }
 
@@ -226,12 +469,6 @@ final class AppEnvironment: ObservableObject {
         return true
     }
 
-    func removeDictionaryItems(at offsets: IndexSet) {
-        let items = offsets.compactMap { dictionary.indices.contains($0) ? dictionary[$0] : nil }
-        dictionary.remove(atOffsets: offsets)
-        for item in items { removePersisted(id: item.id, collection: .dictionary) }
-    }
-
     @discardableResult
     func addSnippet(trigger: String, expansion: String) -> Bool {
         do {
@@ -253,12 +490,6 @@ final class AppEnvironment: ObservableObject {
         snippets.append(item)
         persist(item, collection: .snippets, searchableText: "\(item.trigger) \(item.expansion)")
         return true
-    }
-
-    func removeSnippets(at offsets: IndexSet) {
-        let items = offsets.compactMap { snippets.indices.contains($0) ? snippets[$0] : nil }
-        snippets.remove(atOffsets: offsets)
-        for item in items { removePersisted(id: item.id, collection: .snippets) }
     }
 
     func createNote() -> UUID {
@@ -315,16 +546,269 @@ final class AppEnvironment: ObservableObject {
         updateNote(id: revision.noteID, title: revision.title, body: revision.body)
     }
 
-    func addHistoryRecord(_ record: TranscriptRecord) {
-        history.insert(record, at: 0)
-        persist(record, collection: .history, searchableText: "\(record.sourceApplication) \(record.text)")
+    private func commit(
+        session: SourceSessionRecord,
+        firstResult: TranscriptResultVersion
+    ) async throws {
+        guard let store else {
+            throw SecureRecordStoreError.databaseOperation("Local storage is not ready.")
+        }
+        try await store.append(session: session, firstResult: firstResult)
+        sourceSessions.insert(session, at: 0)
+        resultVersions.insert(firstResult, at: 0)
+        history.insert(
+            try SessionResultProjection.history(session: session, results: [firstResult]),
+            at: 0
+        )
     }
 
     func removeHistoryRecord(id: UUID) {
         history.removeAll { $0.id == id }
-        removePersisted(id: id, collection: .history)
+        sourceSessions.removeAll { $0.id == id }
+        resultVersions.removeAll { $0.sessionID == id }
+        preferredResults.removeAll { $0.sessionID == id }
+        retainedAudioSessionIDs.remove(id)
         let audioURL = MurmurV2Paths.retainedAudioDirectory.appendingPathComponent("\(id.uuidString).wav")
         try? FileManager.default.removeItem(at: audioURL)
+        guard let store else { return }
+        Task { @MainActor [weak self] in
+            do {
+                try await self?.retentionCoordinator?.deleteRecording(sessionID: id)
+                try await store.deleteSession(id: id)
+            } catch {
+                self?.persistenceError = error.localizedDescription
+                try? await self?.reloadVersionedHistory()
+            }
+        }
+    }
+
+    func purgeRetainedAudio() async {
+        do {
+            _ = try await retentionCoordinator?.purgeAll()
+            retainedAudioSessionIDs = []
+        } catch {
+            persistenceError = error.localizedDescription
+        }
+    }
+
+    func copyRecoveryText(sessionID: UUID) {
+        guard let text = recoveryItems.first(where: { $0.id == sessionID })?.result?.finalTranscript
+        else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    func retainRecovery(sessionID: UUID) {
+        recoveryItems.removeAll { $0.id == sessionID }
+        guard let recoveryCoordinator else { return }
+        Task { @MainActor [weak self] in
+            do {
+                try await recoveryCoordinator.clear(sessionID: sessionID)
+            } catch {
+                self?.persistenceError = error.localizedDescription
+            }
+        }
+    }
+
+    func deleteRecovery(sessionID: UUID) {
+        recoveryItems.removeAll { $0.id == sessionID }
+        guard let recoveryCoordinator else { return }
+        Task { @MainActor [weak self] in
+            do {
+                try await recoveryCoordinator.deleteRecovery(sessionID: sessionID)
+                self?.sourceSessions.removeAll { $0.id == sessionID }
+                self?.resultVersions.removeAll { $0.sessionID == sessionID }
+                self?.preferredResults.removeAll { $0.sessionID == sessionID }
+                self?.history.removeAll { $0.id == sessionID }
+                self?.retainedAudioSessionIDs.remove(sessionID)
+            } catch {
+                self?.persistenceError = error.localizedDescription
+            }
+        }
+    }
+
+    func versions(for sessionID: UUID) -> [TranscriptResultVersion] {
+        resultVersions
+            .filter { $0.sessionID == sessionID }
+            .sorted { lhs, rhs in
+                if lhs.createdAt != rhs.createdAt { return lhs.createdAt > rhs.createdAt }
+                return lhs.id.uuidString > rhs.id.uuidString
+            }
+    }
+
+    func preferredResultID(for sessionID: UUID) -> UUID? {
+        preferredResults.first(where: { $0.sessionID == sessionID })?.resultID
+            ?? versions(for: sessionID).first?.id
+    }
+
+    func playRetainedAudio(sessionID: UUID) async {
+        do {
+            try await retainedAudioPlayback?.play(sessionID: sessionID)
+        } catch {
+            persistenceError = error.localizedDescription
+        }
+    }
+
+    func stopRetainedAudio() {
+        retainedAudioPlayback?.stop()
+    }
+
+    func retranscribe(sessionID: UUID, modelIdentifier: String) async {
+        do {
+            guard let store, let retentionCoordinator,
+                  let parentID = preferredResultID(for: sessionID)
+            else { throw RetainedRetranscriptionError.sessionNotFound }
+            let model = try await exactModel(identifier: modelIdentifier)
+            _ = try await RetainedAudioRetranscriptionService(
+                retention: retentionCoordinator,
+                store: store,
+                engine: transcriptionEngine
+            ).retranscribe(
+                sessionID: sessionID,
+                parentResultID: parentID,
+                model: model,
+                settings: settings,
+                dictionary: dictionary,
+                snippets: snippets
+            )
+            try await reloadVersionedHistory()
+        } catch {
+            persistenceError = error.localizedDescription
+        }
+    }
+
+    func retryRecovery(sessionID: UUID, modelIdentifier: String) async {
+        do {
+            guard let store, let retentionCoordinator,
+                  let recoveryCoordinator,
+                  let item = recoveryItems.first(where: { $0.id == sessionID })
+            else { throw RetainedRetranscriptionError.sessionNotFound }
+            let model = try await exactModel(identifier: modelIdentifier)
+            _ = try await RetainedAudioRetranscriptionService(
+                retention: retentionCoordinator,
+                store: store,
+                engine: transcriptionEngine
+            ).recover(
+                item: item,
+                model: model,
+                settings: settings,
+                dictionary: dictionary,
+                snippets: snippets
+            )
+            try await recoveryCoordinator.clear(sessionID: sessionID)
+            recoveryItems.removeAll { $0.id == sessionID }
+            try await reloadVersionedHistory()
+        } catch {
+            persistenceError = error.localizedDescription
+        }
+    }
+
+    func selectPreferredResult(sessionID: UUID, resultID: UUID) async {
+        do {
+            guard let store else {
+                throw SecureRecordStoreError.databaseOperation("Local storage is not ready.")
+            }
+            let preference = PreferredResultRecord(
+                sessionID: sessionID,
+                resultID: resultID,
+                updatedAt: Date()
+            )
+            try await store.savePreferredResult(preference)
+            preferredResults.removeAll { $0.sessionID == sessionID }
+            preferredResults.append(preference)
+            history = try await store.fetchVersionedHistory()
+        } catch {
+            persistenceError = error.localizedDescription
+        }
+    }
+
+    func compareResults(
+        baselineID: UUID,
+        candidateID: UUID
+    ) throws -> ResultVersionComparison {
+        guard let baseline = resultVersions.first(where: { $0.id == baselineID }),
+              let candidate = resultVersions.first(where: { $0.id == candidateID })
+        else { throw RetainedRetranscriptionError.parentNotFound }
+        return try ResultVersionComparisonService.compare(
+            baseline: baseline,
+            candidate: candidate
+        )
+    }
+
+    func issueBundlePreview(
+        sessionID: UUID,
+        options: IssueBundleOptions
+    ) async throws -> IssueBundlePreview {
+        guard let issueBundleService else {
+            throw SecureRecordStoreError.databaseOperation("Local storage is not ready.")
+        }
+        return try await issueBundleService.preview(
+            request: try await issueBundleRequest(sessionID: sessionID),
+            options: options
+        )
+    }
+
+    func issueBundle(
+        sessionID: UUID,
+        options: IssueBundleOptions
+    ) async throws -> Data {
+        guard let issueBundleService else {
+            throw SecureRecordStoreError.databaseOperation("Local storage is not ready.")
+        }
+        return try await issueBundleService.makeBundle(
+            request: try await issueBundleRequest(sessionID: sessionID),
+            options: options
+        )
+    }
+
+    private func exactModel(identifier: String) async throws -> LocalWhisperModel {
+        guard verifiedWhisperModelIdentifiers.contains(identifier) else {
+            throw LocalTranscriptionError.modelUnavailable
+        }
+        let model = try await modelProvider.selectedModel(preferredIdentifier: identifier)
+        guard model.identifier == identifier else { throw LocalTranscriptionError.modelUnavailable }
+        return model
+    }
+
+    private func reloadVersionedHistory() async throws {
+        guard let store else { return }
+        sourceSessions = try await store.fetchSourceSessions()
+        resultVersions = try await store.fetchResultVersions()
+        preferredResults = try await store.fetchPreferredResults()
+        history = try await store.fetchVersionedHistory()
+        retainedAudioSessionIDs = Set(try await store.fetchRetainedAudio().map(\.id))
+    }
+
+    private func issueBundleRequest(sessionID: UUID) async throws -> IssueBundleRequest {
+        guard let session = sourceSessions.first(where: { $0.id == sessionID }),
+              let resultID = preferredResultID(for: sessionID),
+              let result = resultVersions.first(where: { $0.id == resultID })
+        else { throw RetainedRetranscriptionError.sessionNotFound }
+        let model = try? await LocalWhisperModelVerificationCache.shared.verifiedModels(
+            in: LocalWhisperModelCatalog()
+        ).first(where: { $0.identifier == result.modelIdentifier })
+        let recoveryFailure = recoveryItems.first(where: { $0.id == sessionID })?.journal.failureCode
+        let failureCode = recoveryFailure ?? (result.insertionSucceeded ? nil : "insertion-failed")
+        return IssueBundleRequest(
+            session: session,
+            result: result,
+            failureCode: failureCode,
+            modelSHA256: model?.sha256.isEmpty == false ? model?.sha256 : nil
+        )
+    }
+
+    func setAudioRetentionPolicy(_ policy: AudioRetentionPolicy) {
+        updateSettings { $0.audioRetentionPolicy = policy }
+        guard let retentionCoordinator else { return }
+        Task { @MainActor [weak self] in
+            do {
+                try await retentionCoordinator.apply(policy: policy, at: Date())
+                let records = try await self?.store?.fetchRetainedAudio() ?? []
+                self?.retainedAudioSessionIDs = Set(records.map(\.id))
+            } catch {
+                self?.persistenceError = error.localizedDescription
+            }
+        }
     }
 
     func removeDictionaryItem(id: UUID) {
@@ -344,10 +828,66 @@ final class AppEnvironment: ObservableObject {
     }
 
     func updateSettings(_ mutate: (inout MurmurSettingsRecord) -> Void) {
+        let previousPreferredIdentifier = settings.preferredWhisperModelIdentifier
         guard let updated = settings.applyingChange(mutate) else { return }
         settings = updated
         flowBarController.apply(settings: settings)
         persist(settings, collection: .settings, searchableText: "")
+        if previousPreferredIdentifier != updated.preferredWhisperModelIdentifier {
+            scheduleTranscriptionWarmup()
+        }
+    }
+
+    private func scheduleTranscriptionWarmup() {
+        transcriptionWarmupTask?.cancel()
+
+        let preferredIdentifier = settings.preferredWhisperModelIdentifier
+        let transcriptionEngine = self.transcriptionEngine
+        let modelProvider = self.modelProvider
+        transcriptionWarmupTask = Task(priority: .utility) { [weak self] in
+            do {
+                // Refresh verification state before resolving a model so the Models page
+                // reflects what is installed even when no model can be selected yet.
+                let verifiedModels = try await LocalWhisperModelVerificationCache.shared.verifiedModels(
+                    in: LocalWhisperModelCatalog()
+                )
+                guard Task.isCancelled == false else { return }
+                await MainActor.run {
+                    self?.verifiedWhisperModelIdentifiers = Set(verifiedModels.map(\.identifier))
+                }
+                let model = try await modelProvider.selectedModel(preferredIdentifier: preferredIdentifier)
+                try await transcriptionEngine.warmup(model: model)
+            } catch is CancellationError {
+                return
+            } catch {
+                Self.logger.error("Background transcription warmup failed: \(error.localizedDescription, privacy: .public)")
+                // Warmup is speculative. Before onboarding installs a model there is
+                // legitimately nothing to load, and the runtime is absent in builds
+                // without a staged whisper.cpp — neither is a dictation failure, so
+                // neither may surface in the Flow Bar the user has not invoked yet.
+                if Self.isExpectedWarmupPrecondition(error) { return }
+                await MainActor.run {
+                    self?.dictationOrchestrator.recordBackgroundError(error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    /// Warmup failures that reflect a not-yet-configured install rather than a fault.
+    nonisolated static func isExpectedWarmupPrecondition(_ error: Error) -> Bool {
+        guard let error = error as? LocalTranscriptionError else { return false }
+        switch error {
+        case .modelUnavailable, .runtimeUnavailable: return true
+        case .emptyTranscript, .incompleteTranscript, .processFailed: return false
+        }
+    }
+
+    private static func makeTranscriptionEngine() -> any LocalTranscriptionEngine {
+#if MURMUR_RESIDENT_WHISPER
+        ResidentWhisperEngine()
+#else
+        WhisperCLITranscriptionEngine()
+#endif
     }
 
     func encodedLibrary() throws -> Data {
@@ -418,7 +958,10 @@ final class AppEnvironment: ObservableObject {
             styles: styles,
             notes: notes,
             revisions: noteRevisions,
-            settings: settings
+            settings: settings,
+            sourceSessions: sourceSessions,
+            resultVersions: resultVersions,
+            preferredResults: preferredResults
         )
         return try await Task.detached(priority: .userInitiated) {
             try MurmurBackupService().encrypt(payload, password: password)
@@ -431,7 +974,16 @@ final class AppEnvironment: ObservableObject {
             try MurmurBackupService().decrypt(data, password: password)
         }.value
         try await store.restore(payload)
-        history = payload.history.sorted { $0.createdAt > $1.createdAt }
+        _ = try await retentionCoordinator?.purgeAll()
+        for journal in try await store.fetchRecoveryJournals() {
+            try await store.deleteRecoveryJournal(id: journal.id)
+        }
+        recoveryItems = []
+        retainedAudioSessionIDs = []
+        sourceSessions = try await store.fetchSourceSessions()
+        resultVersions = try await store.fetchResultVersions()
+        preferredResults = try await store.fetchPreferredResults()
+        history = try await store.fetchVersionedHistory()
         dictionary = payload.dictionary
         snippets = payload.snippets
         styles = Self.mergeStyles(stored: payload.styles)

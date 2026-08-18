@@ -233,18 +233,21 @@ enum ModelFileActivator {
     }
 }
 
-private final class ModelDownloadDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+final class ModelDownloadDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<URL, Error>?
     private var session: URLSession?
     private var stagingURL: URL?
-    private var progressHandler: (@Sendable (Double) -> Void)?
+    private var progressHandler: (@Sendable (Int64, Int64, Double) -> Void)?
     private var completedDownload = false
+    private var task: URLSessionDownloadTask?
+    private var startedAt = Date()
 
     func download(
         from remoteURL: URL,
         stagingURL: URL,
-        progressHandler: @escaping @Sendable (Double) -> Void
+        resumeData: Data? = nil,
+        progressHandler: @escaping @Sendable (Int64, Int64, Double) -> Void
     ) async throws -> URL {
         self.stagingURL = stagingURL
         self.progressHandler = progressHandler
@@ -255,12 +258,26 @@ private final class ModelDownloadDelegate: NSObject, URLSessionDownloadDelegate,
                 self.continuation = continuation
                 let session = URLSession(configuration: .ephemeral, delegate: self, delegateQueue: nil)
                 self.session = session
-                let task = session.downloadTask(with: remoteURL)
+                let task = resumeData.map(session.downloadTask(withResumeData:)) ?? session.downloadTask(with: remoteURL)
+                self.task = task
+                self.startedAt = Date()
                 task.resume()
                 lock.unlock()
             }
         } onCancel: {
             self.cancel()
+        }
+    }
+
+    func pause(completion: @escaping @Sendable (Data?) -> Void) {
+        lock.lock()
+        let task = task
+        let continuation = continuation
+        self.continuation = nil
+        lock.unlock()
+        task?.cancel { data in
+            completion(data)
+            continuation?.resume(throwing: ModelInstallError.cancelled)
         }
     }
 
@@ -281,7 +298,8 @@ private final class ModelDownloadDelegate: NSObject, URLSessionDownloadDelegate,
         totalBytesExpectedToWrite: Int64
     ) {
         guard totalBytesExpectedToWrite > 0 else { return }
-        progressHandler?(min(max(Double(totalBytesWritten) / Double(totalBytesExpectedToWrite), 0), 1))
+        let elapsed = max(Date().timeIntervalSince(startedAt), 0.1)
+        progressHandler?(totalBytesWritten, totalBytesExpectedToWrite, Double(totalBytesWritten) / elapsed)
     }
 
     func urlSession(
@@ -342,6 +360,7 @@ final class WhisperModelInstaller: ObservableObject {
     enum State: Equatable {
         case idle
         case downloading(WhisperDownloadManifest)
+        case paused(WhisperDownloadManifest)
         case verifying(WhisperDownloadManifest)
         case installed(WhisperDownloadManifest)
         case failed(String)
@@ -349,58 +368,120 @@ final class WhisperModelInstaller: ObservableObject {
 
     @Published private(set) var state: State = .idle
     @Published private(set) var progress = 0.0
+    @Published private(set) var downloadedBytes: Int64 = 0
+    @Published private(set) var expectedBytes: Int64 = 0
+    @Published private(set) var bytesPerSecond: Double = 0
 
     private var delegate: ModelDownloadDelegate?
     private var installTask: Task<Void, Never>?
+    private var isPausing = false
+    private var activeManifest: WhisperDownloadManifest?
+
+    private var resumeDataURL: URL {
+        MurmurV2Paths.modelsDirectory.appendingPathComponent("Whisper/download.resume")
+    }
+    private var resumeManifestURL: URL {
+        MurmurV2Paths.modelsDirectory.appendingPathComponent("Whisper/download-manifest.txt")
+    }
+
+    init() {
+        guard let identifier = try? String(contentsOf: resumeManifestURL, encoding: .utf8),
+              let manifest = WhisperDownloadManifest.supported.first(where: { $0.id == identifier }),
+              FileManager.default.fileExists(atPath: resumeDataURL.path)
+        else { return }
+        activeManifest = manifest
+        expectedBytes = manifest.byteCount
+        state = .paused(manifest)
+    }
 
     func install(_ manifest: WhisperDownloadManifest) {
-        cancel()
+        cancel(removePartial: true)
+        downloadedBytes = 0
+        expectedBytes = manifest.byteCount
+        bytesPerSecond = 0
         progress = 0
+        install(manifest, preservingResumeData: false)
+    }
+
+    func pause() {
+        guard case .downloading(let manifest) = state else { return }
+        isPausing = true
+        delegate?.pause { [weak self] data in
+            Task { @MainActor in
+                guard let self else { return }
+                if let data {
+                    try? FileManager.default.createDirectory(at: self.resumeDataURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    try? data.write(to: self.resumeDataURL, options: .atomic)
+                    try? manifest.id.write(to: self.resumeManifestURL, atomically: true, encoding: .utf8)
+                    self.state = .paused(manifest)
+                } else {
+                    self.state = .failed("This server could not pause the download. Try again.")
+                }
+                self.isPausing = false
+                self.installTask = nil
+                self.delegate = nil
+            }
+        }
+    }
+
+    func resume() {
+        guard case .paused(let manifest) = state else { return }
+        install(manifest, preservingResumeData: true)
+    }
+
+    private func install(_ manifest: WhisperDownloadManifest, preservingResumeData: Bool) {
+        if preservingResumeData == false { clearResumeState() }
+        progress = expectedBytes > 0 ? Double(downloadedBytes) / Double(expectedBytes) : 0
         state = .downloading(manifest)
+        activeManifest = manifest
         let delegate = ModelDownloadDelegate()
         self.delegate = delegate
-        installTask = Task { @MainActor [weak self] in
+        installTask = makeInstallTask(manifest: manifest, delegate: delegate)
+    }
+
+    private func makeInstallTask(manifest: WhisperDownloadManifest, delegate: ModelDownloadDelegate) -> Task<Void, Never> {
+        Task { @MainActor [weak self] in
             guard let self else { return }
             let directory = MurmurV2Paths.modelsDirectory.appendingPathComponent("Whisper", isDirectory: true)
             let stagingURL = directory.appendingPathComponent("\(manifest.fileName).partial")
             let destinationURL = directory.appendingPathComponent(manifest.fileName)
             do {
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-                let downloadedURL = try await delegate.download(
-                    from: manifest.downloadURL,
-                    stagingURL: stagingURL,
-                    progressHandler: { progress in
-                        Task { @MainActor [weak self] in self?.progress = progress }
+                let resumeData = try? Data(contentsOf: resumeDataURL)
+                let downloadedURL = try await delegate.download(from: manifest.downloadURL, stagingURL: stagingURL, resumeData: resumeData) { downloaded, expected, speed in
+                    Task { @MainActor [weak self] in
+                        self?.downloadedBytes = downloaded; self?.expectedBytes = expected; self?.bytesPerSecond = speed
+                        self?.progress = expected > 0 ? Double(downloaded) / Double(expected) : 0
                     }
-                )
-                guard Task.isCancelled == false else { throw ModelInstallError.cancelled }
-                state = .verifying(manifest)
-                guard try ModelIntegrityVerifier.verify(url: downloadedURL, expectedSHA256: manifest.sha256) else {
-                    try? FileManager.default.removeItem(at: downloadedURL)
-                    throw ModelInstallError.checksumMismatch
                 }
+                state = .verifying(manifest)
+                guard try ModelIntegrityVerifier.verify(url: downloadedURL, expectedSHA256: manifest.sha256) else { throw ModelInstallError.checksumMismatch }
                 try ModelFileActivator.activate(stagedURL: downloadedURL, destinationURL: destinationURL)
                 await LocalWhisperModelVerificationCache.shared.invalidate()
-                progress = 1
-                state = .installed(manifest)
-            } catch is CancellationError {
-                try? FileManager.default.removeItem(at: stagingURL)
-                state = .idle
-            } catch ModelInstallError.cancelled {
-                try? FileManager.default.removeItem(at: stagingURL)
-                state = .idle
-            } catch {
-                try? FileManager.default.removeItem(at: stagingURL)
-                state = .failed(error.localizedDescription)
-            }
+                progress = 1; state = .installed(manifest); clearResumeState()
+            } catch ModelInstallError.cancelled { if isPausing == false { state = .idle } }
+            catch { if isPausing == false { state = .failed(error.localizedDescription) } }
         }
     }
 
-    func cancel() {
+    func cancel(removePartial: Bool = true) {
         installTask?.cancel()
         delegate?.cancel()
         installTask = nil
         delegate = nil
+        if removePartial {
+            clearResumeState()
+            if let activeManifest {
+                let partial = MurmurV2Paths.modelsDirectory.appendingPathComponent("Whisper/\(activeManifest.fileName).partial")
+                try? FileManager.default.removeItem(at: partial)
+            }
+        }
         if case .downloading = state { state = .idle }
+        if case .paused = state { state = .idle }
+    }
+
+    private func clearResumeState() {
+        try? FileManager.default.removeItem(at: resumeDataURL)
+        try? FileManager.default.removeItem(at: resumeManifestURL)
     }
 }

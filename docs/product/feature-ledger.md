@@ -2,7 +2,7 @@
 
 **Purpose:** Permanent inventory of approved, current, and deferred product capabilities.
 
-**Last updated:** 2026-08-02
+**Last updated:** 2026-08-04
 
 ## Status and Phase Definitions
 
@@ -42,19 +42,19 @@ documentation, accessibility, and acceptance metrics are satisfied.
 | TRN-001 | Resident in-process whisper.cpp runtime | F0 | Current | Real inference and repeated-context integration tests pass |
 | TRN-002 | One authoritative full-recording final pass | F0 | Current | No plausible partial stream can bypass the full pass |
 | TRN-003 | Dictionary/snippet vocabulary prompting | F0 | Current | Prompt limits and recognition fixtures pass |
-| TRN-004 | Confidence and completeness signals | F1 | Planned | Signals correlate with labeled omissions and uncertainty |
-| TRN-005 | Word/segment timestamp alignment | F1 | Planned | Alignment error stays within corpus threshold |
+| TRN-004 | Confidence and completeness signals | F1 | Partial | Short sparse-output density and timestamp-grounded voiced-region coverage trigger a sensitive/full-context retry; exact repeated phrase blocks are collapsed and unresolved coverage is blocked. Retained-audio replay passes; packaged field retest remains |
+| TRN-005 | Word/segment timestamp alignment | F1 | Partial | Deterministic word edit alignment exists; timestamp alignment remains planned |
 | TRN-006 | Local language detection | F3 | Planned | Per-language confusion matrix is published |
 | TRN-007 | Explicit language selection and shortlist hints | F3 | Planned | Provider/model contract tests pass |
 | TRN-008 | OpenAI audio transcription | F3 | Planned | Explicit scope, cancellation, timeout, and response tests pass |
 | TRN-009 | OpenAI-compatible audio transcription | F3 | Planned | Capability probe and compatibility fixtures pass |
 | TRN-010 | Explicit provider fallback order | F3 | Planned | No undeclared route is reachable |
 | TRN-011 | Translation transcription task | F4 | Planned | Source preservation and target-language evaluation pass |
-| TRN-012 | Local/BYOK model comparison | F2 | Planned | Same source audio can produce versioned comparable results |
+| TRN-012 | Local/BYOK model comparison | F2 | Partial | Installed local models produce comparable immutable results; BYOK routes remain F3 |
 | MOD-001 | Model download and management | F0 | Current | Install, activate, select, and remove tests pass |
 | MOD-002 | Full SHA-256 verification before activation | F0 | Current | Corrupt assets never become active |
 | MOD-003 | Atomic model activation and rollback | F0 | Current | Interrupted install preserves last working model |
-| MOD-004 | Capability metadata per model/provider | F3 | Planned | UI never offers unsupported operations |
+| MOD-004 | Capability metadata per model/provider | F3 | Partial | Three pinned local tiers expose task, architecture, license, size, and memory metadata; measured cross-model benchmarks remain |
 | MOD-005 | Model quality and hardware recommendations | F3 | Planned | Recommendations derive from measured device data |
 
 ## Preview, Flow Bar, and Dictation Control
@@ -68,7 +68,7 @@ documentation, accessibility, and acceptance metrics are satisfied.
 | FLOW-005 | Elapsed time and audio-device indicators | F3 | Planned | Long-session and device-change states remain accurate |
 | FLOW-006 | Push-to-talk dictation | F0 | Current | Shortcut lifecycle and cancellation tests pass |
 | FLOW-007 | Hands-free dictation | F0 | Current | Start/stop/cancel state is recoverable |
-| FLOW-008 | Command Mode | F0 | Current | Selection remains unchanged on transform failure |
+| FLOW-008 | Command Mode | F0 | Partial | Both chord orders route to one command session before speech; upgrades after speech are rejected. Packaged field retest remains |
 | FLOW-009 | Configurable shortcuts | F3 | Planned | Conflict detection and accessibility pass |
 
 ## Recovery and History
@@ -76,22 +76,22 @@ documentation, accessibility, and acceptance metrics are satisfied.
 | ID | Capability | Phase | Status | Completion gate |
 |---|---|---:|---|---|
 | REC-001 | Recording retention disabled by default | F0 | Current | No raw audio persists without explicit setting |
-| REC-002 | Explicit encrypted rolling retention | F2 | Planned | Consent, encryption, expiration, and purge tests pass |
-| REC-003 | Suggested seven-day retention policy | F2 | Planned | User can shorten, extend, disable, or purge immediately |
-| REC-004 | Interrupted-session recovery | F2 | Planned | Restart/interruption never overwrites source audio |
-| REC-005 | Failed-transcription recovery | F2 | Planned | Available audio can be retried before disposal |
+| REC-002 | Explicit encrypted rolling retention | F2 | Current | Consent, encryption, expiration, migration, and purge tests pass |
+| REC-003 | Suggested seven-day retention policy | F2 | Current | Off, 1-day, 7-day, 30-day, and Until Deleted policies are available |
+| REC-004 | Interrupted-session recovery | F2 | Current | Encrypted journals reconcile capture, finalization, insertion, and cleanup without overwrite |
+| REC-005 | Failed-transcription recovery | F2 | Current | Authenticated retained audio can be retried with an installed model before disposal |
 | REC-006 | Failed-insertion recovery | F0 | Current | Final text remains reachable and retryable |
-| REC-007 | Retranscribe with another model/provider | F2 | Planned | Creates a new immutable result version |
-| REC-008 | Aligned transcript diff | F2 | Planned | Insertions, deletions, substitutions, and moved spans are clear |
-| REC-009 | Model/provider A/B comparison | F2 | Planned | Accuracy, latency, cost metadata, and text are comparable |
-| REC-010 | One-click redacted issue bundle | F2 | Planned | Preview shows every included private field |
+| REC-007 | Retranscribe with another model/provider | F2 | Partial | Installed-model reprocessing is current and append-only; remote provider routing remains F3 |
+| REC-008 | Aligned transcript diff | F2 | Current | Arbitrary versions show deterministic insertions, deletions, substitutions, and word difference |
+| REC-009 | Model/provider A/B comparison | F2 | Partial | Local model, language, latency, and text comparison is current; remote cost/provider data awaits F3 |
+| REC-010 | One-click redacted issue bundle | F2 | Current | Preview enumerates fields; transcript and audio require independent explicit consent |
 | HIST-001 | Encrypted local transcript history | F0 | Current | Payload encryption and tamper tests pass |
 | HIST-002 | Keyed blind-index search | F0 | Current | Searchable plaintext is absent from storage |
-| HIST-003 | Raw and final transcript versions | F2 | Planned | Provenance is immutable and queryable |
-| HIST-004 | Provider/model/language/profile provenance | F2 | Planned | Every result identifies its processing route |
-| HIST-005 | Retained-audio playback | F2 | Planned | Playback never decrypts to a persistent plaintext file |
-| HIST-006 | Search, copy, retry, export, report, and delete actions | F2 | Partial | All actions operate on immutable result versions |
-| HIST-007 | Secure cascading audio deletion | F2 | Partial | Deleting/expiring a session removes wrapped keys and files |
+| HIST-003 | Raw and final transcript versions | F2 | Current | New and migrated records are immutable, encrypted, searchable, and backup-safe |
+| HIST-004 | Provider/model/language/profile provenance | F2 | Partial | Provider, model, and language are current; processing-profile provenance remains |
+| HIST-005 | Retained-audio playback | F2 | Current | Authenticated audio plays from memory without a persistent plaintext file |
+| HIST-006 | Search, copy, retry, export, report, and delete actions | F2 | Current | Record actions preserve immutable results and confirm recoverable deletion |
+| HIST-007 | Secure cascading audio deletion | F2 | Current | Deleting, expiring, disabling, or purging removes wrapped keys before files |
 | HIST-008 | Usage and local quality dashboard | F1 | Planned | Metrics remain local and content-free by default |
 
 ## Repair, Grounding, and Personalization
@@ -104,10 +104,11 @@ documentation, accessibility, and acceptance metrics are satisfied.
 | CORR-004 | Explicit cross-pause self-correction repair | F0 | Current | Complete transcript is processed exactly once |
 | CORR-005 | Spoken punctuation and numbered lists | F0 | Current | Formatting fixtures pass |
 | CORR-006 | Protected-detail grounding | F0 | Current | Zero invented protected entities in release corpus |
-| CORR-007 | Optional BYOK text transformation | F3 | Planned | Grounding and provenance gates pass |
+| CORR-007 | Optional BYOK text transformation | F3 | Partial | Production routing, validator, consent UI, and provenance pass; real-provider manual matrix remains |
 | CORR-008 | Post-insertion correction detection | F3 | Planned | Learning runs only on reliably observed localized edits |
 | CORR-009 | Correction review queue | F3 | Planned | No learned rule becomes global without review |
 | CORR-010 | Per-profile correction rules | F3 | Planned | Scope and precedence are deterministic |
+| CORR-011 | Optional isolated multi-model MLX text transformation | F3 | Partial | Signed worker, real Qwen inference, validation/fallback, resident reuse, health circuit, three-tier downloads, and session selection pass; remaining models and signed-app Mail/Gmail checks remain |
 | PERS-001 | Dictionary management | F0 | Current | Validation, duplicates, import, and export tests pass |
 | PERS-002 | Voice snippets | F0 | Current | Trigger collision and expansion tests pass |
 | PERS-003 | Custom writing instructions | F3 | Planned | Instructions are scoped, previewable, and grounded |
@@ -120,7 +121,7 @@ documentation, accessibility, and acceptance metrics are satisfied.
 | LANG-001 | Expose all languages supported by the active model/provider | F3 | Planned | Unsupported combinations are hidden or disabled |
 | LANG-002 | Verified quality tier | F3 | Planned | Dedicated corpus and native-speaker review pass |
 | LANG-003 | Community-tested quality tier | F3 | Planned | Reproducible contributed corpus and results exist |
-| LANG-004 | Experimental quality tier | F3 | Planned | UI makes absence of a Murmur quality claim explicit |
+| LANG-004 | Experimental quality tier | F3 | Partial | Local writing model is explicitly labeled Experimental; broader language tiers remain |
 | LANG-005 | Per-language correction and formatting rules | F3 | Planned | Rules never silently apply across languages |
 | LANG-006 | Community language evaluation packs | F6 | Planned | Packs are versioned, validated, licensed, and reproducible |
 
@@ -128,17 +129,17 @@ documentation, accessibility, and acceptance metrics are satisfied.
 
 | ID | Capability | Phase | Status | Completion gate |
 |---|---|---:|---|---|
-| BYOK-001 | OpenAI provider adapter | F3 | Planned | Audio and text capability contract tests pass |
-| BYOK-002 | OpenAI-compatible endpoint adapter | F3 | Planned | Capability probe and response fixtures pass |
-| BYOK-003 | API keys stored in Keychain | F3 | Planned | Keys never enter preferences, logs, or exports |
-| BYOK-004 | Separate audio and text transmission consent | F3 | Planned | Profile UI and request builder enforce scopes |
-| BYOK-005 | Request scope preview | F3 | Planned | User can inspect audio/text/context categories before activation |
-| BYOK-006 | HTTPS remote and HTTP-loopback endpoint policy | F3 | Planned | Invalid or unsafe endpoint configurations are rejected |
-| BYOK-007 | Timeouts, size limits, cancellation, and response validation | F3 | Planned | Malformed/adversarial provider fixtures fail safely |
+| BYOK-001 | OpenAI provider adapter | F3 | Partial | Text Responses contract passes; audio capability remains planned |
+| BYOK-002 | OpenAI-compatible endpoint adapter | F3 | Partial | Responses-compatible endpoint capture, fixed-content connection check, and fixtures pass; Chat Completions remains planned |
+| BYOK-003 | API keys stored in Keychain | F3 | Partial | CRUD and save/replace/delete UI exist without readback; physical UI/export audit remains |
+| BYOK-004 | Separate audio and text transmission consent | F3 | Partial | Completed Email and selected Command text have independent scopes; cloud audio remains unimplemented |
+| BYOK-005 | Request scope preview | F3 | Partial | Engine UI lists exact Email and Command categories; broader context inspector remains |
+| BYOK-006 | HTTPS remote and HTTP-loopback endpoint policy | F3 | Current | Captured compatible configuration and endpoint adversarial tests pass |
+| BYOK-007 | Timeouts, size limits, cancellation, and response validation | F3 | Partial | All text routes fail safely in fixtures; real-provider failure matrix remains manual |
 | BYOK-008 | Cost and latency metadata where available | F3 | Planned | Estimates are labeled and never expose content |
-| CTX-001 | Application identity context | F3 | Planned | Permission is visible and profile-scoped |
-| CTX-002 | Browser-domain rules | F3 | Planned | Domain matching handles subdomains and private browsing safely |
-| CTX-003 | Selected-text context | F3 | Planned | Selection is unchanged on failure |
+| CTX-001 | Application identity context | F3 | Partial | Captured bundle identity routes Mail and per-app off; full profile inspector remains |
+| CTX-002 | Browser-domain rules | F3 | Partial | Consented exact Gmail classification rejects spoofed/private/unavailable state; general site profiles remain |
+| CTX-003 | Selected-text context | F3 | Partial | Explicit Command selection has separate scope and remains unchanged on failure; broader actions remain |
 | CTX-004 | Nearby-text context | F3 | Planned | Bounded extraction and explicit provider disclosure pass |
 | CTX-005 | Workspace vocabulary context | F3 | Planned | Only approved terms leave the workspace boundary |
 | CTX-006 | Context permission inspector | F3 | Planned | Effective local and remote context is explainable per session |
@@ -148,15 +149,15 @@ documentation, accessibility, and acceptance metrics are satisfied.
 | ID | Capability | Phase | Status | Completion gate |
 |---|---|---:|---|---|
 | PROF-001 | Local profiles | F3 | Planned | Profiles require no account and are independently exportable |
-| PROF-002 | Application rules | F3 | Planned | Deterministic matching and precedence tests pass |
+| PROF-002 | Application rules | F3 | Partial | Mail/Gmail Email mode and off switches use deterministic precedence; general profiles remain |
 | PROF-003 | Website rules | F3 | Planned | URL permission and matching tests pass |
-| PROF-004 | Provider/model/language routing | F3 | Planned | Captured session policy cannot mutate mid-session |
-| PROF-005 | Context permission routing | F3 | Planned | Effective scopes are inspectable before use |
-| PROF-006 | Explicit fallback routing | F3 | Planned | Only declared routes are reachable |
+| PROF-004 | Provider/model/language routing | F3 | Partial | Provider/model route is immutable per session; language routing remains |
+| PROF-005 | Context permission routing | F3 | Partial | Email, Gmail-domain, and Command scopes are explicit; full inspector remains |
+| PROF-006 | Explicit fallback routing | F3 | Partial | Only the selected route and deterministic source fallback run; ordered provider fallbacks remain unimplemented |
 | PROF-007 | Formatting and auto-submit behavior | F3 | Planned | Auto-submit is app-scoped and insertion-verified |
 | MODE-001 | Plain dictation mode | F0 | Current | No stylistic rewrite beyond enabled deterministic processing |
 | MODE-002 | Message mode | F3 | Planned | App-aware formatting and grounding pass |
-| MODE-003 | Email mode | F3 | Planned | Greeting/body/signoff behavior is context-safe |
+| MODE-003 | Email mode | F3 | Partial | A model-free deterministic formatter preserves every word while adding bounded greeting/body/sign-off paragraphs; real Mail/Gmail verification remains |
 | MODE-004 | Document mode | F3 | Planned | Paragraph/list formatting corpus passes |
 | MODE-005 | AI prompt mode | F3 | Planned | Technical terms and explicit wording are preserved |
 | MODE-006 | Developer mode | F3 | Planned | Code, identifiers, terminal, and tool vocabulary corpus passes |
@@ -175,8 +176,8 @@ documentation, accessibility, and acceptance metrics are satisfied.
 | INS-006 | Accessibility fallback with verification | F0 | Current | False negatives cannot cause duplicate insertion |
 | INS-007 | Secure-input detection and recovery | F0 | Current | Transcript remains recoverable when keystrokes are blocked |
 | INS-008 | Terminal-safe insertion | F3 | Planned | Supported terminal matrix passes without shell side effects |
-| INS-009 | Application/control compatibility matrix | F1 | Planned | At least 99.5% successful or recoverable outcomes |
-| INS-010 | Per-application insertion strategies | F3 | Planned | Strategies are evidence-based and regression-tested |
+| INS-009 | Application/control compatibility matrix | F1 | Partial | All control families are declared; manual app/version results remain untested |
+| INS-010 | Per-application insertion strategies | F3 | Partial | Policy and content-free recorder exist; app-specific evidence remains incomplete |
 
 ## Transcription Studio and Export
 
@@ -253,21 +254,21 @@ documentation, accessibility, and acceptance metrics are satisfied.
 | SEC-001 | Local operation without account or network | F0 | Current | Network-denied end-to-end path passes |
 | SEC-002 | No telemetry backend | F0 | Current | Build and network audit find no telemetry path |
 | SEC-003 | Redacted diagnostics export | F0 | Current | Private content requires separate explicit opt-in |
-| SEC-004 | Per-recording encryption and crypto-shredding | F2 | Planned | Wrapped key deletion makes expired audio unrecoverable |
+| SEC-004 | Per-recording encryption and crypto-shredding | F2 | Current | Random wrapped keys, authenticated chunks, and key-first deletion are tested |
 | SEC-005 | Provider data-flow inspector | F3 | Planned | Effective endpoint and payload categories are visible |
 | SEC-006 | Import and community-pack sandboxing | F6 | Planned | Malformed and oversized inputs fail before mutation |
 | SEC-007 | Plugin capability permissions | F6 | Planned | Network/filesystem/context/audio scopes are enforceable |
-| SEC-008 | Privacy regression tests | F1 | Planned | Content cannot enter logs or unintended requests |
-| EVAL-001 | Versioned real/synthetic audio corpus runner | F1 | Planned | Reproducible on baseline hardware |
-| EVAL-002 | Phrase-boundary completeness scoring | F1 | Planned | Beginning/middle/end omissions block release |
-| EVAL-003 | WER and CER dashboard | F1 | Planned | Reported by model, language, audio condition, and device |
+| SEC-008 | Privacy regression tests | F1 | Partial | Canary redaction and source-surface audits pass; network-denied runtime interception remains |
+| EVAL-001 | Versioned real/synthetic audio corpus runner | F1 | Current | Real resident inference emits explicit success, failure, or prerequisite skips |
+| EVAL-002 | Phrase-boundary completeness scoring | F1 | Current | Beginning/middle/end and protected-token omissions block the corpus gate |
+| EVAL-003 | WER and CER dashboard | F1 | Partial | Versioned grouped JSON reports exist; interactive dashboard remains planned |
 | EVAL-004 | Correction and grounding acceptance corpus | F0 | Current | At least 98% correction resolution and zero invented entities |
 | EVAL-005 | Quiet/whisper evaluation corpus | F1 | Planned | Metrics separated from normal-volume speech |
-| EVAL-006 | Latency dashboard by duration bucket | F1 | Planned | p50/p95 reported on baseline M1 and current reference Mac |
-| EVAL-007 | Application insertion matrix | F1 | Planned | At least 99.5% successful or recoverable outcomes |
+| EVAL-006 | Latency dashboard by duration bucket | F1 | Partial | Stage timings and p50/p95 JSON exist; checked multi-run baseline remains |
+| EVAL-007 | Application insertion matrix | F1 | Partial | Declarative matrix and content-free recorder exist; manual rows remain untested |
 | EVAL-008 | Provider contract fixture suite | F3 | Planned | Success, partial, malformed, timeout, and cancellation cases pass |
 | EVAL-009 | Long-session memory, energy, and thermal suite | F5 | Planned | Published thresholds block regressions |
-| EVAL-010 | Local quality dashboard | F1 | Planned | No dictated content is required for aggregate metrics |
+| EVAL-010 | Local quality dashboard | F1 | Current | One local command emits aggregate-only logs and a versioned gate report |
 
 ## Platforms and Distribution
 

@@ -99,6 +99,67 @@ struct LocalWhisperEngineTests {
     @Test func candidateScoringRejectsArtifactsAndRepeatedHallucinations() {
         #expect(TranscriptQualityEvaluator.shouldRetry("Thank you you you"))
         #expect(TranscriptQualityEvaluator.shouldRetry("[BLANK_AUDIO]"))
+        #expect(TranscriptQualityEvaluator.shouldRetry("") )
+        #expect(TranscriptQualityEvaluator.shouldRetry("yes") == false)
+        #expect(TranscriptQualityEvaluator.shouldRetry("send it") == false)
         #expect(TranscriptQualityEvaluator.score("The quiet sentence is complete.") > TranscriptQualityEvaluator.score("quiet quiet quiet"))
+    }
+
+    @Test func implausiblySparseTranscriptRetriesWithoutPenalizingNormalShortDictation() {
+        #expect(
+            TranscriptQualityEvaluator.looksTruncated(
+                "give a",
+                recordingDurationSeconds: 8
+            )
+        )
+        #expect(
+            TranscriptQualityEvaluator.shouldRetry(
+                "give a",
+                recordingDurationSeconds: 8
+            )
+        )
+        #expect(
+            TranscriptQualityEvaluator.looksTruncated(
+                "give a",
+                recordingDurationSeconds: 3
+            )
+        )
+        #expect(
+            TranscriptQualityEvaluator.looksTruncated(
+                "give this a try",
+                recordingDurationSeconds: 3
+            ) == false
+        )
+        #expect(
+            TranscriptQualityEvaluator.looksTruncated(
+                "Please send the revised schedule after lunch.",
+                recordingDurationSeconds: 8
+            ) == false
+        )
+    }
+
+    @Test func sparseThreeSecondTranscriptRetriesBecauseItCanHideACutOffEnding() {
+        #expect(TranscriptQualityEvaluator.shouldRetry(
+            "go ahead",
+            recordingDurationSeconds: 3.2
+        ))
+        #expect(TranscriptQualityEvaluator.shouldRetry(
+            "go ahead and start with that implementation",
+            recordingDurationSeconds: 3.2
+        ) == false)
+    }
+
+    @Test func collapsesOnlyARepeatedWholePhrase() {
+        #expect(TranscriptQualityEvaluator.collapsingRepeatedPhrase(
+            "You go ahead and start with that implementation you go ahead and start with that implementation"
+        ) == "You go ahead and start with that implementation")
+        #expect(TranscriptQualityEvaluator.collapsingRepeatedPhrase("very very useful") == "very very useful")
+    }
+
+    @Test func audioContextTruncationScalesWithRealBufferLength() {
+        #expect(WhisperAudioContextPolicy.audioContext(forSampleCount: 1_600) == 256)
+        #expect(WhisperAudioContextPolicy.audioContext(forSampleCount: 48_000) == 278)
+        #expect(WhisperAudioContextPolicy.audioContext(forSampleCount: 464_000) == 1_500)
+        #expect(WhisperAudioContextPolicy.audioContext(forSampleCount: 480_000) == 0)
     }
 }

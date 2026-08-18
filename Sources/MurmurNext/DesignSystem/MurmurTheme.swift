@@ -1,149 +1,153 @@
+import AppKit
 import SwiftUI
 
+// ENGRAVED PANEL — direction contract (seed 7acc830d, assigned index 6)
+//
+// THESIS: Murmur is equipment, not an app. It refuses the floating-pill-and-bouncing-
+//   waveform arrangement every local dictation tool ships.
+// OWN-WORLD: An anodised faceplate in two finishes — natural silver in light, black
+//   anodize in dark. Legends are engraved caps in Archivo Condensed, not labels.
+//   Rectilinear plates with a 3pt machined edge break, hairline scribe rules with
+//   corner ticks, and exactly two lamps: record red and verify green.
+// STORY: The user is writing in another app. Murmur reports its state the way a field
+//   recorder does — a lamp that is on or off, a meter against a printed scale — and
+//   never asks to be looked at.
+// FIRST VIEWPORT: Engraved legend column at left cut from the chassis finish; the panel
+//   proper at right, divided by scribe rules; the shortcut legend engraved at the foot
+//   of the column where a real device puts it.
+// FORM: Instrument faceplate, candidate 6 of the grounded list, seed key 7acc830d.
+// FINISH: unreviewed and undocumented is unfinished; this build ends with the finish
+//   review, the verdict, and DESIGN.md.
+
+// MARK: - Faces
+
+/// The engraved legend voice. Archivo Condensed ships with the app under the OFL;
+/// the system condensed width is the fallback when the resource bundle is missing.
+enum MurmurFace {
+    private static let isRegistered: Bool = {
+        var registeredAny = false
+        for name in ["ArchivoCondensed-Medium", "ArchivoCondensed-SemiBold"] {
+            let url = Bundle.module.url(forResource: name, withExtension: "ttf", subdirectory: "Fonts")
+                ?? Bundle.module.url(forResource: name, withExtension: "ttf")
+            guard let url else { continue }
+            if CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil) {
+                registeredAny = true
+            }
+        }
+        return registeredAny
+    }()
+
+    /// Engraved panel lettering. Always set in caps with positive tracking.
+    static func legend(_ size: CGFloat, weight: Font.Weight = .semibold) -> Font {
+        _ = isRegistered
+        let postScriptName = weight == .medium ? "ArchivoCondensed-Medium" : "ArchivoCondensed-SemiBold"
+        if let engraved = NSFont(name: postScriptName, size: size) {
+            return Font(engraved)
+        }
+        let systemWeight: NSFont.Weight = weight == .medium ? .medium : .semibold
+        return Font(NSFont.systemFont(ofSize: size, weight: systemWeight, width: .condensed))
+    }
+
+    /// Body and transcript text. The native face, deliberately — it is not the display voice.
+    static func body(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        .system(size: size, weight: weight)
+    }
+
+    /// Measured values only: decibels, durations, byte counts, rates. Never a costume.
+    static func readout(_ size: CGFloat, weight: Font.Weight = .medium) -> Font {
+        .system(size: size, weight: weight, design: .monospaced)
+    }
+}
+
+// MARK: - Finish
+
+private func srgb(_ hex: UInt32) -> NSColor {
+    NSColor(
+        srgbRed: Double((hex >> 16) & 0xFF) / 255,
+        green: Double((hex >> 8) & 0xFF) / 255,
+        blue: Double(hex & 0xFF) / 255,
+        alpha: 1
+    )
+}
+
+private func isDarkAnodize(_ appearance: NSAppearance) -> Bool {
+    appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+}
+
+/// One panel, two anodizings. The finish changes; the engraving does not.
+private func anodized(natural: UInt32, black: UInt32) -> Color {
+    Color(nsColor: NSColor(name: nil) { appearance in
+        isDarkAnodize(appearance) ? srgb(black) : srgb(natural)
+    })
+}
+
+/// A scribed line is an absence of finish, so it is expressed as opacity, not pigment.
+private func scribed(natural: Double, black: Double) -> Color {
+    Color(nsColor: NSColor(name: nil) { appearance in
+        let dark = isDarkAnodize(appearance)
+        return (dark ? NSColor.white : NSColor.black).withAlphaComponent(dark ? black : natural)
+    })
+}
+
 enum MurmurTheme {
-    enum ColorToken {
-        static let canvas = Color(red: 0.973, green: 0.969, blue: 0.956)
-        static let sidebar = Color(red: 0.937, green: 0.925, blue: 0.895)
-        static let surface = Color(red: 0.995, green: 0.992, blue: 0.982)
-        static let surfaceRaised = Color.white
-        static let ink = Color(red: 0.105, green: 0.102, blue: 0.092)
-        static let secondaryInk = Color(red: 0.37, green: 0.35, blue: 0.31)
-        static let tertiaryInk = Color(red: 0.54, green: 0.51, blue: 0.45)
-        static let line = Color.black.opacity(0.085)
-        static let selected = Color.black.opacity(0.075)
-        static let inverse = Color(red: 0.10, green: 0.095, blue: 0.082)
-        static let success = Color(red: 0.16, green: 0.48, blue: 0.30)
-        static let warning = Color(red: 0.74, green: 0.43, blue: 0.12)
-        static let danger = Color(red: 0.72, green: 0.18, blue: 0.16)
+    enum Finish {
+        /// The panel face content sits on. Held a step darker than the plates so a
+        /// raised plate actually reads as raised in both finishes.
+        static let panel = anodized(natural: 0xD8D9D5, black: 0x151614)
+        /// The heavier chassis the legend column is cut from.
+        static let chassis = anodized(natural: 0xC6C8C2, black: 0x0F100E)
+        /// A plate raised off the panel — where a group of controls or content lives.
+        static let plate = anodized(natural: 0xF0F1EE, black: 0x262723)
+        /// A milled recess — fields, wells, anything you type or read into.
+        static let recess = anodized(natural: 0xD3D5D0, black: 0x121311)
+        /// The selected legend's milled seat in the column.
+        static let seat = anodized(natural: 0xDCDED8, black: 0x2B2C27)
+    }
+
+    enum Engraving {
+        /// Primary legend fill: graphite in the natural finish, bone in the black.
+        static let ink = anodized(natural: 0x1E201D, black: 0xE9EAE5)
+        static let secondary = anodized(natural: 0x4B4F48, black: 0xACAFA5)
+        /// Micro-legends. Held at ≥4.5:1 against `plate` in both finishes.
+        static let tertiary = anodized(natural: 0x5F635B, black: 0x8D9187)
+        /// Hairline scribe rule.
+        static let scribe = scribed(natural: 0.16, black: 0.16)
+        /// Scribe rule at a panel division.
+        static let scribeStrong = scribed(natural: 0.30, black: 0.28)
+    }
+
+    /// Two lamps and one caution. Nothing else on the panel is coloured.
+    enum Lamp {
+        /// Lit only while audio is genuinely being captured.
+        static let record = anodized(natural: 0xB83227, black: 0xE24A34)
+        /// Lit only when a transcript was grounded and inserted.
+        static let verify = anodized(natural: 0x2F6B41, black: 0x53A468)
+        static let caution = anodized(natural: 0x8F5D12, black: 0xD69A3C)
+        /// An unlit lamp is a dark bezel, never an absent element.
+        static let unlit = scribed(natural: 0.16, black: 0.24)
     }
 
     enum Space {
-        static let xSmall: CGFloat = 6
-        static let small: CGFloat = 10
-        static let medium: CGFloat = 16
-        static let large: CGFloat = 24
-        static let xLarge: CGFloat = 32
-        static let xxLarge: CGFloat = 48
-    }
-
-    enum Radius {
+        static let hairline: CGFloat = 1
+        static let xSmall: CGFloat = 4
         static let small: CGFloat = 8
         static let medium: CGFloat = 12
         static let large: CGFloat = 18
-        static let pill: CGFloat = 999
-    }
-}
-
-struct MurmurPrimaryButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 15)
-            .frame(height: 36)
-            .background(MurmurTheme.ColorToken.inverse.opacity(configuration.isPressed ? 0.78 : 1))
-            .clipShape(RoundedRectangle(cornerRadius: MurmurTheme.Radius.small, style: .continuous))
-    }
-}
-
-struct MurmurSecondaryButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(MurmurTheme.ColorToken.ink)
-            .padding(.horizontal, 13)
-            .frame(height: 34)
-            .background(MurmurTheme.ColorToken.surfaceRaised.opacity(configuration.isPressed ? 0.6 : 1))
-            .overlay {
-                RoundedRectangle(cornerRadius: MurmurTheme.Radius.small, style: .continuous)
-                    .stroke(MurmurTheme.ColorToken.line)
-            }
-            .clipShape(RoundedRectangle(cornerRadius: MurmurTheme.Radius.small, style: .continuous))
-    }
-}
-
-struct MurmurCard<Content: View>: View {
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        content
-            .padding(MurmurTheme.Space.large)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(MurmurTheme.ColorToken.surfaceRaised)
-            .clipShape(RoundedRectangle(cornerRadius: MurmurTheme.Radius.medium, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: MurmurTheme.Radius.medium, style: .continuous)
-                    .stroke(MurmurTheme.ColorToken.line)
-            }
-    }
-}
-
-struct PageHeader: View {
-    let eyebrow: String?
-    let title: String
-    let subtitle: String
-
-    init(eyebrow: String? = nil, title: String, subtitle: String) {
-        self.eyebrow = eyebrow
-        self.title = title
-        self.subtitle = subtitle
+        static let xLarge: CGFloat = 28
+        static let xxLarge: CGFloat = 44
     }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let eyebrow {
-                Text(eyebrow.uppercased())
-                    .font(.system(size: 10, weight: .bold))
-                    .tracking(1.4)
-                    .foregroundStyle(MurmurTheme.ColorToken.tertiaryInk)
-            }
-            Text(title)
-                .font(.system(size: 30, weight: .semibold, design: .rounded))
-                .foregroundStyle(MurmurTheme.ColorToken.ink)
-            Text(subtitle)
-                .font(.system(size: 14))
-                .foregroundStyle(MurmurTheme.ColorToken.secondaryInk)
-        }
-    }
-}
-
-struct EmptyFeatureView: View {
-    let icon: String
-    let title: String
-    let message: String
-    let actionTitle: String?
-    let action: (() -> Void)?
-
-    init(icon: String, title: String, message: String, actionTitle: String? = nil, action: (() -> Void)? = nil) {
-        self.icon = icon
-        self.title = title
-        self.message = message
-        self.actionTitle = actionTitle
-        self.action = action
+    /// Machined edge breaks, not app rounding. A panel is rectilinear.
+    enum Edge {
+        static let plate: CGFloat = 3
+        static let control: CGFloat = 2.5
+        static let flowBar: CGFloat = 5
     }
 
-    var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 23, weight: .medium))
-                .foregroundStyle(MurmurTheme.ColorToken.tertiaryInk)
-                .frame(width: 48, height: 48)
-                .background(MurmurTheme.ColorToken.sidebar)
-                .clipShape(Circle())
-            Text(title)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(MurmurTheme.ColorToken.ink)
-            Text(message)
-                .font(.system(size: 13))
-                .foregroundStyle(MurmurTheme.ColorToken.secondaryInk)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 340)
-            if let actionTitle, let action {
-                Button(actionTitle, action: action)
-                    .buttonStyle(MurmurPrimaryButtonStyle())
-                    .padding(.top, 4)
-            }
-        }
-        .frame(maxWidth: .infinity, minHeight: 260)
+    /// Tracking for engraved caps, by optical size.
+    enum Tracking {
+        static let title: CGFloat = 1.8
+        static let legend: CGFloat = 1.35
+        static let micro: CGFloat = 1.1
     }
 }

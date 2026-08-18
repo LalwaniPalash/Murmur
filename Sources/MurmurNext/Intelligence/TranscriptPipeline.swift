@@ -160,6 +160,12 @@ struct TranscriptPersonalizer: Sendable {
 struct FinalTranscript: Equatable, Sendable {
     let text: String
     let repairEdits: [SpeechRepairEdit]
+    let timings: FinalTranscriptStageTimings
+}
+
+struct FinalTranscriptStageTimings: Equatable, Sendable {
+    let repair: Duration
+    let grounding: Duration
 }
 
 enum FinalTranscriptPipelineError: Error, LocalizedError {
@@ -182,10 +188,14 @@ struct FinalTranscriptPipeline: Sendable {
     private let groundingValidator = TranscriptGroundingValidator()
 
     func finalize(_ sourceTranscript: String, context: WritingContext) throws -> FinalTranscript {
+        let clock = ContinuousClock()
+        let repairStartedAt = clock.now
         let repaired = removeSpeechArtifacts
             ? repairEngine.repair(sourceTranscript)
             : SpeechRepairResult(text: sourceTranscript.trimmingCharacters(in: .whitespacesAndNewlines), edits: [])
+        let repairDuration = repairStartedAt.duration(to: clock.now)
         guard repaired.text.isEmpty == false else { throw FinalTranscriptPipelineError.empty }
+        let groundingStartedAt = clock.now
         let personalized = personalizer.apply(to: repaired.text, context: context)
         let finalizedText = polish(personalized.text, context: context, sourceTranscript: sourceTranscript)
         guard finalizedText.isEmpty == false else { throw FinalTranscriptPipelineError.empty }
@@ -197,7 +207,14 @@ struct FinalTranscriptPipeline: Sendable {
         guard grounding.isGrounded else {
             throw FinalTranscriptPipelineError.ungrounded(grounding.unsupportedTokens)
         }
-        return FinalTranscript(text: finalizedText, repairEdits: repaired.edits)
+        return FinalTranscript(
+            text: finalizedText,
+            repairEdits: repaired.edits,
+            timings: FinalTranscriptStageTimings(
+                repair: repairDuration,
+                grounding: groundingStartedAt.duration(to: clock.now)
+            )
+        )
     }
 
     private func polish(_ text: String, context: WritingContext, sourceTranscript: String) -> String {

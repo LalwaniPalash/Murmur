@@ -3,6 +3,17 @@ import Testing
 @testable import MurmurNext
 
 struct LibraryTransferServiceTests {
+    private struct LegacyBackupPayload: Encodable {
+        let exportedAt: Date
+        let history: [TranscriptRecord]
+        let dictionary: [DictionaryItem]
+        let snippets: [SnippetItem]
+        let styles: [WritingStyle]
+        let notes: [ScratchpadNote]
+        let revisions: [ScratchpadRevision]
+        let settings: MurmurSettingsRecord
+    }
+
     @Test func libraryImportPreviewsDuplicatesBeforeApplying() throws {
         let existing = DictionaryItem(
             id: UUID(),
@@ -111,6 +122,115 @@ struct LibraryTransferServiceTests {
         #expect(throws: MurmurTransferError.self) {
             _ = try MurmurBackupService(iterations: 1_000).encrypt(payload, password: "short")
         }
+    }
+
+    @Test func passwordBackupPreservesVersionedRawAndFinalResults() throws {
+        let sessionID = UUID()
+        let session = SourceSessionRecord(
+            id: sessionID,
+            startedAt: Date(timeIntervalSince1970: 100),
+            endedAt: Date(timeIntervalSince1970: 104),
+            sourceApplication: "Mail",
+            sourceBundleIdentifier: "com.apple.mail",
+            context: .email,
+            mode: .pushToTalk,
+            recordingDuration: 4
+        )
+        let result = TranscriptResultVersion(
+            id: UUID(),
+            sessionID: sessionID,
+            createdAt: Date(timeIntervalSince1970: 105),
+            rawTranscript: "Raw private words.",
+            finalTranscript: "Final private words.",
+            providerIdentifier: "local-whisper",
+            modelIdentifier: "small.en",
+            language: "en",
+            totalProcessingDuration: 0.4,
+            insertionSucceeded: true
+        )
+        let preferred = PreferredResultRecord(
+            sessionID: sessionID,
+            resultID: result.id,
+            updatedAt: Date(timeIntervalSince1970: 106)
+        )
+        let payload = MurmurBackupPayload(
+            exportedAt: .now,
+            history: [],
+            dictionary: [],
+            snippets: [],
+            styles: [],
+            notes: [],
+            settings: .default,
+            sourceSessions: [session],
+            resultVersions: [result],
+            preferredResults: [preferred]
+        )
+        let service = MurmurBackupService(iterations: 1_000)
+
+        let encrypted = try service.encrypt(payload, password: "a long unique passphrase")
+        let restored = try service.decrypt(encrypted, password: "a long unique passphrase")
+
+        #expect(encrypted.range(of: Data(result.rawTranscript.utf8)) == nil)
+        #expect(encrypted.range(of: Data(result.finalTranscript.utf8)) == nil)
+        #expect(restored.sourceSessions == [session])
+        #expect(restored.resultVersions == [result])
+        #expect(restored.preferredResults == [preferred])
+    }
+
+    @Test func backupRejectsResultWithMissingSession() {
+        let result = TranscriptResultVersion(
+            id: UUID(),
+            sessionID: UUID(),
+            createdAt: .now,
+            rawTranscript: "Raw.",
+            finalTranscript: "Final.",
+            providerIdentifier: "local-whisper",
+            modelIdentifier: "small.en",
+            language: "en",
+            totalProcessingDuration: 0.1,
+            insertionSucceeded: true
+        )
+        let payload = MurmurBackupPayload(
+            exportedAt: .now,
+            history: [],
+            dictionary: [],
+            snippets: [],
+            styles: [],
+            notes: [],
+            settings: .default,
+            resultVersions: [result]
+        )
+
+        #expect(throws: MurmurTransferError.self) {
+            _ = try MurmurBackupService(iterations: 1_000).encrypt(
+                payload,
+                password: "a long unique passphrase"
+            )
+        }
+    }
+
+    @Test func oldPayloadWithoutVersionedArraysStillDecodes() throws {
+        let legacy = LegacyBackupPayload(
+            exportedAt: Date(timeIntervalSince1970: 100),
+            history: [],
+            dictionary: [],
+            snippets: [],
+            styles: [],
+            notes: [],
+            revisions: [],
+            settings: .default
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .millisecondsSince1970
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .millisecondsSince1970
+
+        let decoded = try decoder.decode(MurmurBackupPayload.self, from: encoder.encode(legacy))
+
+        #expect(decoded.sourceSessions.isEmpty)
+        #expect(decoded.resultVersions.isEmpty)
+        #expect(decoded.preferredResults.isEmpty)
+        #expect(decoded.settings == .default)
     }
 
     @Test func backupRejectsOversizedPrivateFieldsBeforeEncryption() {

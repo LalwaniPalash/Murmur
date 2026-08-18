@@ -6,13 +6,13 @@ final class GlobalShortcutMonitor {
     var onDictationPressed: (() -> Void)?
     var onDictationReleased: (() -> Void)?
     var onCommandPressed: (() -> Void)?
+    var onCommandUpgrade: (() -> Bool)?
     var onCommandReleased: (() -> Void)?
     var onCancel: (() -> Void)?
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
-    private var functionKeyIsDown = false
-    private var activeMode: DictationMode?
+    private var chord = ShortcutChordResolver()
 
     @discardableResult
     func start() -> Bool {
@@ -42,8 +42,7 @@ final class GlobalShortcutMonitor {
         if let runLoopSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes) }
         eventTap = nil
         runLoopSource = nil
-        functionKeyIsDown = false
-        activeMode = nil
+        chord.reset()
     }
 
     private func handle(typeRawValue: UInt32, flagsRawValue: UInt64, keyCode: Int64) {
@@ -55,24 +54,25 @@ final class GlobalShortcutMonitor {
         guard type == .flagsChanged else { return }
 
         let flags = CGEventFlags(rawValue: flagsRawValue)
-        let functionIsDown = flags.contains(.maskSecondaryFn)
-        if functionIsDown, functionKeyIsDown == false {
-            functionKeyIsDown = true
-            if flags.contains(.maskControl) {
-                activeMode = .command
-                onCommandPressed?()
-            } else {
-                activeMode = .pushToTalk
+        let actions = chord.observe(
+            functionIsDown: flags.contains(.maskSecondaryFn),
+            controlIsDown: flags.contains(.maskControl),
+            nowNanoseconds: DispatchTime.now().uptimeNanoseconds
+        )
+        for action in actions {
+            switch action {
+            case .beginDictation:
                 onDictationPressed?()
-            }
-        } else if functionIsDown == false, functionKeyIsDown {
-            functionKeyIsDown = false
-            let endingMode = activeMode
-            activeMode = nil
-            if endingMode == .command {
-                onCommandReleased?()
-            } else {
+            case .beginCommand:
+                onCommandPressed?()
+            case .requestCommandUpgrade:
+                if onCommandUpgrade?() == true {
+                    chord.confirmCommandUpgrade()
+                }
+            case .endDictation:
                 onDictationReleased?()
+            case .endCommand:
+                onCommandReleased?()
             }
         }
     }
@@ -83,9 +83,73 @@ final class GlobalShortcutMonitor {
         let typeRawValue = type.rawValue
         let flagsRawValue = event.flags.rawValue
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-        Task { @MainActor in
+        // The tap is installed on the main run loop, so handle synchronously. Spawning one
+        // Task per flags event can reorder Fn and Control before the monitor sees them.
+        MainActor.assumeIsolated {
             monitor.handle(typeRawValue: typeRawValue, flagsRawValue: flagsRawValue, keyCode: keyCode)
         }
         return Unmanaged.passUnretained(event)
+    }
+}
+
+struct ShortcutChordResolver: Sendable {
+    enum Action: Equatable, Sendable {
+        case beginDictation
+        case beginCommand
+        case requestCommandUpgrade
+        case endDictation
+        case endCommand
+    }
+
+    private(set) var functionIsDown = false
+    private(set) var activeMode: DictationMode?
+    private var upgradeWasRequested = false
+
+    mutating func observe(
+        functionIsDown: Bool,
+        controlIsDown: Bool,
+        nowNanoseconds: UInt64
+    ) -> [Action] {
+        if functionIsDown, self.functionIsDown == false {
+            self.functionIsDown = true
+            upgradeWasRequested = false
+            if controlIsDown {
+                activeMode = .command
+                return [.beginCommand]
+            }
+            activeMode = .pushToTalk
+            return [.beginDictation]
+        }
+
+        if functionIsDown,
+           self.functionIsDown,
+           controlIsDown,
+           activeMode == .pushToTalk,
+           upgradeWasRequested == false
+        {
+            upgradeWasRequested = true
+            return [.requestCommandUpgrade]
+        }
+
+        if functionIsDown == false, self.functionIsDown {
+            self.functionIsDown = false
+            upgradeWasRequested = false
+            let endingMode = activeMode
+            activeMode = nil
+            return endingMode == .command ? [.endCommand] : [.endDictation]
+        }
+
+        return []
+    }
+
+    mutating func confirmCommandUpgrade() {
+        guard functionIsDown, activeMode == .pushToTalk, upgradeWasRequested else { return }
+        activeMode = .command
+    }
+
+    mutating func reset() {
+        functionIsDown = false
+        activeMode = nil
+        upgradeWasRequested = false
     }
 }

@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "fixtures": [
+    {
+      "id": "boundary-completeness",
+      "source": {
+        "kind": "synthesis",
+        "text": "Opening alpha is present. The essential middle section remains complete. Closing omega is present.",
+        "voice": "Samantha",
+        "rate": 175
+      },
+      "expectedTranscript": "Opening alpha is present. The essential middle section remains complete. Closing omega is present.",
+      "requiredPhrases": [
+        { "text": "Opening alpha", "region": "beginning" },
+        { "text": "essential middle section", "region": "middle" },
+        { "text": "Closing omega", "region": "end" }
+      ],
+      "protectedTokens": ["alpha", "essential", "omega"],
+      "language": "en",
+      "speechCondition": "normal",
+      "microphoneClass": "synthetic",
+      "tags": ["completeness", "boundaries", "synthetic"],
+      "consent": {
+        "origin": "synthetic",
+        "license": "CC0-1.0"
+      }
+    },
+    {
+      "id": "proper-name-preservation",
+      "source": {
+        "kind": "synthesis",
+        "text": "Send the quarterly report to Michael before Friday.",
+        "voice": "Samantha",
+        "rate": 180
+      },
+      "expectedTranscript": "Send the quarterly report to Michael before Friday.",
+      "requiredPhrases": [
+        { "text": "quarterly report", "region": "middle" },
+        { "text": "Michael before Friday", "region": "end" }
+      ],
+      "protectedTokens": ["Michael", "Friday"],
+      "language": "en",
+      "speechCondition": "normal",
+      "microphoneClass": "synthetic",
+      "tags": ["proper-name", "protected-token", "synthetic"],
+      "consent": {
+        "origin": "synthetic",
+        "license": "CC0-1.0"
+      }
+    },
+    {
+      "id": "short-utterance",
+      "source": {
+        "kind": "synthesis",
+        "text": "Yes, that works.",
+        "voice": "Samantha",
+        "rate": 180
+      },
+      "expectedTranscript": "Yes, that works.",
+      "requiredPhrases": [
+        { "text": "Yes that works", "region": "anywhere" }
+      ],
+      "protectedTokens": [],
+      "language": "en",
+      "speechCondition": "normal",
+      "microphoneClass": "synthetic",
+      "tags": ["short", "latency", "synthetic"],
+      "consent": {
+        "origin": "synthetic",
+        "license": "CC0-1.0"
+      }
+    }
+  ]
+}

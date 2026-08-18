@@ -170,6 +170,9 @@ struct MurmurBackupPayload: Codable, Equatable, Sendable {
     let notes: [ScratchpadNote]
     let revisions: [ScratchpadRevision]
     let settings: MurmurSettingsRecord
+    let sourceSessions: [SourceSessionRecord]
+    let resultVersions: [TranscriptResultVersion]
+    let preferredResults: [PreferredResultRecord]
 
     init(
         exportedAt: Date,
@@ -179,7 +182,10 @@ struct MurmurBackupPayload: Codable, Equatable, Sendable {
         styles: [WritingStyle],
         notes: [ScratchpadNote],
         revisions: [ScratchpadRevision] = [],
-        settings: MurmurSettingsRecord
+        settings: MurmurSettingsRecord,
+        sourceSessions: [SourceSessionRecord] = [],
+        resultVersions: [TranscriptResultVersion] = [],
+        preferredResults: [PreferredResultRecord] = []
     ) {
         self.exportedAt = exportedAt
         self.history = history
@@ -189,10 +195,14 @@ struct MurmurBackupPayload: Codable, Equatable, Sendable {
         self.notes = notes
         self.revisions = revisions
         self.settings = settings
+        self.sourceSessions = sourceSessions
+        self.resultVersions = resultVersions
+        self.preferredResults = preferredResults
     }
 
     private enum CodingKeys: String, CodingKey {
         case exportedAt, history, dictionary, snippets, styles, notes, revisions, settings
+        case sourceSessions, resultVersions, preferredResults
     }
 
     init(from decoder: Decoder) throws {
@@ -205,6 +215,18 @@ struct MurmurBackupPayload: Codable, Equatable, Sendable {
         notes = try container.decode([ScratchpadNote].self, forKey: .notes)
         revisions = try container.decodeIfPresent([ScratchpadRevision].self, forKey: .revisions) ?? []
         settings = try container.decode(MurmurSettingsRecord.self, forKey: .settings)
+        sourceSessions = try container.decodeIfPresent(
+            [SourceSessionRecord].self,
+            forKey: .sourceSessions
+        ) ?? []
+        resultVersions = try container.decodeIfPresent(
+            [TranscriptResultVersion].self,
+            forKey: .resultVersions
+        ) ?? []
+        preferredResults = try container.decodeIfPresent(
+            [PreferredResultRecord].self,
+            forKey: .preferredResults
+        ) ?? []
     }
 }
 
@@ -294,13 +316,40 @@ struct MurmurBackupService: Sendable {
               payload.snippets.count <= 10_000,
               payload.styles.count <= 10_000,
               payload.notes.count <= 10_000,
-              payload.revisions.count <= 100_000
+              payload.revisions.count <= 100_000,
+              payload.sourceSessions.count <= 100_000,
+              payload.resultVersions.count <= 500_000,
+              payload.preferredResults.count <= 100_000
         else { throw MurmurTransferError.tooManyItems }
 
         for record in payload.history {
             try validateBackupField(record.sourceApplication)
             try validateBackupField(record.text)
         }
+        do {
+            try SessionResultGraphValidator.validate(
+                sessions: payload.sourceSessions,
+                results: payload.resultVersions
+            )
+        } catch {
+            throw MurmurTransferError.invalidFormat
+        }
+        for session in payload.sourceSessions {
+            try validateBackupField(session.sourceApplication)
+        }
+        for result in payload.resultVersions {
+            try validateBackupField(result.rawTranscript)
+            try validateBackupField(result.finalTranscript)
+            try validateBackupField(result.providerIdentifier)
+            try validateBackupField(result.modelIdentifier)
+            try validateBackupField(result.language)
+        }
+        let resultsByID = Dictionary(uniqueKeysWithValues: payload.resultVersions.map { ($0.id, $0) })
+        guard Set(payload.preferredResults.map(\.sessionID)).count == payload.preferredResults.count,
+              payload.preferredResults.allSatisfy({ preference in
+                  resultsByID[preference.resultID]?.sessionID == preference.sessionID
+              })
+        else { throw MurmurTransferError.invalidFormat }
         for item in payload.dictionary {
             try validateBackupField(item.spokenForm)
             try validateBackupField(item.writtenForm)

@@ -11,43 +11,65 @@ struct LocalWhisperModel: Identifiable, Equatable, Sendable {
 }
 
 struct LocalTranscriptionRequest: Sendable {
-    let audioFileURL: URL
+    let samples: [Float]
     let model: LocalWhisperModel
     let language: String
     let prompt: String?
     let beamSize: Int
     let bestOf: Int
     let quietSpeechLikely: Bool
+    let forceFullAudioContext: Bool
 
     init(
-        audioFileURL: URL,
+        samples: [Float],
         model: LocalWhisperModel,
         language: String,
         prompt: String?,
         beamSize: Int,
         bestOf: Int,
-        quietSpeechLikely: Bool = false
+        quietSpeechLikely: Bool = false,
+        forceFullAudioContext: Bool = false
     ) {
-        self.audioFileURL = audioFileURL
+        self.samples = samples
         self.model = model
         self.language = language
         self.prompt = prompt
         self.beamSize = beamSize
         self.bestOf = bestOf
         self.quietSpeechLikely = quietSpeechLikely
+        self.forceFullAudioContext = forceFullAudioContext
     }
+}
+
+struct TranscriptionTimeRange: Equatable, Sendable {
+    let startSeconds: Double
+    let endSeconds: Double
 }
 
 struct LocalTranscriptionResult: Equatable, Sendable {
     let text: String
     let usedBeamSize: Int
     let elapsed: Duration
+    let timeRanges: [TranscriptionTimeRange]?
+
+    init(
+        text: String,
+        usedBeamSize: Int,
+        elapsed: Duration,
+        timeRanges: [TranscriptionTimeRange]? = nil
+    ) {
+        self.text = text
+        self.usedBeamSize = usedBeamSize
+        self.elapsed = elapsed
+        self.timeRanges = timeRanges
+    }
 }
 
 enum LocalTranscriptionError: Error, LocalizedError {
     case runtimeUnavailable
     case modelUnavailable
     case emptyTranscript
+    case incompleteTranscript
     case processFailed(exitCode: Int32, message: String)
 
     var errorDescription: String? {
@@ -55,6 +77,7 @@ enum LocalTranscriptionError: Error, LocalizedError {
         case .runtimeUnavailable: "The bundled local Whisper runtime is unavailable."
         case .modelUnavailable: "No verified local Whisper model is installed."
         case .emptyTranscript: "Murmur could not hear enough speech to transcribe safely."
+        case .incompleteTranscript: "Murmur detected speech that was missing from the transcript. The recording was kept so you can recover it."
         case .processFailed(let exitCode, let message):
             "Local transcription failed (\(exitCode)): \(message)"
         }
@@ -62,8 +85,14 @@ enum LocalTranscriptionError: Error, LocalizedError {
 }
 
 protocol LocalTranscriptionEngine: Sendable {
+    var supportsPersistentFileFreeTranscription: Bool { get }
+    func warmup(model: LocalWhisperModel) async throws
     func transcribe(_ request: LocalTranscriptionRequest) async throws -> LocalTranscriptionResult
     func cancel() async
+}
+
+extension LocalTranscriptionEngine {
+    var supportsPersistentFileFreeTranscription: Bool { true }
 }
 
 enum WaveFileEncoder {
@@ -72,29 +101,29 @@ enum WaveFileEncoder {
         let bitsPerSample: UInt16 = 16
         let bytesPerSample = UInt32(bitsPerSample / 8)
         let dataByteCount = UInt32(clamping: samples.count) * bytesPerSample
-        var data = Data()
-        data.reserveCapacity(44 + Int(dataByteCount))
+        var bytes = [UInt8](repeating: 0, count: 44 + Int(dataByteCount))
+        var offset = 0
 
-        data.appendASCII("RIFF")
-        data.appendLittleEndian(UInt32(36) + dataByteCount)
-        data.appendASCII("WAVE")
-        data.appendASCII("fmt ")
-        data.appendLittleEndian(UInt32(16))
-        data.appendLittleEndian(UInt16(1))
-        data.appendLittleEndian(channelCount)
-        data.appendLittleEndian(sampleRate)
-        data.appendLittleEndian(sampleRate * UInt32(channelCount) * bytesPerSample)
-        data.appendLittleEndian(channelCount * UInt16(bytesPerSample))
-        data.appendLittleEndian(bitsPerSample)
-        data.appendASCII("data")
-        data.appendLittleEndian(dataByteCount)
+        writeASCII("RIFF", into: &bytes, at: &offset)
+        writeLittleEndian(UInt32(36) + dataByteCount, into: &bytes, at: &offset)
+        writeASCII("WAVE", into: &bytes, at: &offset)
+        writeASCII("fmt ", into: &bytes, at: &offset)
+        writeLittleEndian(UInt32(16), into: &bytes, at: &offset)
+        writeLittleEndian(UInt16(1), into: &bytes, at: &offset)
+        writeLittleEndian(channelCount, into: &bytes, at: &offset)
+        writeLittleEndian(sampleRate, into: &bytes, at: &offset)
+        writeLittleEndian(sampleRate * UInt32(channelCount) * bytesPerSample, into: &bytes, at: &offset)
+        writeLittleEndian(channelCount * UInt16(bytesPerSample), into: &bytes, at: &offset)
+        writeLittleEndian(bitsPerSample, into: &bytes, at: &offset)
+        writeASCII("data", into: &bytes, at: &offset)
+        writeLittleEndian(dataByteCount, into: &bytes, at: &offset)
 
         for sample in samples {
             let clamped = min(max(sample, -1), 1)
             let integer = Int16(clamping: Int((clamped * Float(Int16.max)).rounded()))
-            data.appendLittleEndian(UInt16(bitPattern: integer))
+            writeLittleEndian(UInt16(bitPattern: integer), into: &bytes, at: &offset)
         }
-        return data
+        return Data(bytes)
     }
 
     static func writeTemporaryFile(samples: [Float], sampleRate: UInt32 = 16_000) throws -> URL {
@@ -102,6 +131,28 @@ enum WaveFileEncoder {
             .appendingPathComponent("murmur-\(UUID().uuidString).wav")
         try encode(samples: samples, sampleRate: sampleRate).write(to: url, options: [.atomic])
         return url
+    }
+
+    private static func writeASCII(_ string: String, into bytes: inout [UInt8], at offset: inout Int) {
+        let utf8 = Array(string.utf8)
+        let end = offset + utf8.count
+        bytes[offset..<end] = utf8[...]
+        offset = end
+    }
+
+    private static func writeLittleEndian<Value: FixedWidthInteger>(
+        _ value: Value,
+        into bytes: inout [UInt8],
+        at offset: inout Int
+    ) {
+        var littleEndian = value.littleEndian
+        Swift.withUnsafeBytes(of: &littleEndian) { buffer in
+            let end = offset + buffer.count
+            for (index, byte) in buffer.enumerated() {
+                bytes[offset + index] = byte
+            }
+            offset = end
+        }
     }
 }
 
@@ -260,7 +311,14 @@ enum WhisperOutputParser {
 }
 
 actor WhisperCLITranscriptionEngine: LocalTranscriptionEngine {
+    nonisolated let supportsPersistentFileFreeTranscription = false
     private var activeExecution: WhisperProcessExecution?
+
+    func warmup(model: LocalWhisperModel) throws {
+        guard FileManager.default.fileExists(atPath: model.fileURL.path) else {
+            throw LocalTranscriptionError.modelUnavailable
+        }
+    }
 
     func transcribe(_ request: LocalTranscriptionRequest) async throws -> LocalTranscriptionResult {
         guard FileManager.default.fileExists(atPath: request.model.fileURL.path) else {
@@ -272,9 +330,12 @@ actor WhisperCLITranscriptionEngine: LocalTranscriptionEngine {
 
         let clock = ContinuousClock()
         let startedAt = clock.now
+        let audioFileURL = try WaveFileEncoder.writeTemporaryFile(samples: request.samples)
+        defer { try? FileManager.default.removeItem(at: audioFileURL) }
         let primary = try await runPass(
             request: request,
             runtime: runtime,
+            audioFileURL: audioFileURL,
             beamSize: max(request.beamSize, 1),
             bestOf: max(request.bestOf, 1),
             noSpeechThreshold: request.quietSpeechLikely ? 0.82 : 0.72,
@@ -283,11 +344,16 @@ actor WhisperCLITranscriptionEngine: LocalTranscriptionEngine {
         var selected = primary
         var selectedBeamSize = request.beamSize
 
-        if request.quietSpeechLikely || TranscriptQualityEvaluator.shouldRetry(primary) {
+        let recordingDurationSeconds = Double(request.samples.count) / 16_000
+        if request.quietSpeechLikely || TranscriptQualityEvaluator.shouldRetry(
+            primary,
+            recordingDurationSeconds: recordingDurationSeconds
+        ) {
             do {
                 let sensitive = try await runPass(
                     request: request,
                     runtime: runtime,
+                    audioFileURL: audioFileURL,
                     beamSize: max(request.beamSize, 8),
                     bestOf: max(request.bestOf, 8),
                     noSpeechThreshold: 0.90,
@@ -304,6 +370,7 @@ actor WhisperCLITranscriptionEngine: LocalTranscriptionEngine {
             }
         }
 
+        selected = TranscriptQualityEvaluator.collapsingRepeatedPhrase(selected)
         guard selected.isEmpty == false else { throw LocalTranscriptionError.emptyTranscript }
         return LocalTranscriptionResult(
             text: selected,
@@ -320,6 +387,7 @@ actor WhisperCLITranscriptionEngine: LocalTranscriptionEngine {
     private func runPass(
         request: LocalTranscriptionRequest,
         runtime: WhisperRuntimeLocation,
+        audioFileURL: URL,
         beamSize: Int,
         bestOf: Int,
         noSpeechThreshold: Double,
@@ -331,6 +399,7 @@ actor WhisperCLITranscriptionEngine: LocalTranscriptionEngine {
             configuration: processConfiguration,
             arguments: arguments(
                 request: request,
+                audioFileURL: audioFileURL,
                 beamSize: beamSize,
                 bestOf: bestOf,
                 noSpeechThreshold: noSpeechThreshold,
@@ -350,6 +419,7 @@ actor WhisperCLITranscriptionEngine: LocalTranscriptionEngine {
 
     private func arguments(
         request: LocalTranscriptionRequest,
+        audioFileURL: URL,
         beamSize: Int,
         bestOf: Int,
         noSpeechThreshold: Double,
@@ -357,7 +427,7 @@ actor WhisperCLITranscriptionEngine: LocalTranscriptionEngine {
     ) -> [String] {
         var arguments = [
             "-m", request.model.fileURL.path,
-            "-f", request.audioFileURL.path,
+            "-f", audioFileURL.path,
             "-np", "-nt", "-fa", "-sns",
             "-l", request.language,
             "-bs", String(beamSize),
@@ -374,21 +444,59 @@ actor WhisperCLITranscriptionEngine: LocalTranscriptionEngine {
 }
 
 enum TranscriptQualityEvaluator {
-    static func shouldRetry(_ text: String) -> Bool {
+    static func shouldRetry(
+        _ text: String,
+        recordingDurationSeconds: Double? = nil
+    ) -> Bool {
         let words = normalizedWords(text)
         guard words.isEmpty == false else { return true }
         if text.contains("[") || text.contains("]") { return true }
         if repeatedRunPenalty(words) >= 2 { return true }
-        return words.count <= 2
+        if let recordingDurationSeconds,
+           looksTruncated(text, recordingDurationSeconds: recordingDurationSeconds)
+        {
+            return true
+        }
+        return false
+    }
+
+    /// A retry signal, not a rejection rule. A transcript below one word per second can be
+    /// legitimate, but is cheap to verify and matches retained recordings where Whisper
+    /// returned only the opening words. Long pauses may cause an unnecessary retry; they can
+    /// never make Murmur discard the primary result.
+    static func looksTruncated(
+        _ text: String,
+        recordingDurationSeconds: Double
+    ) -> Bool {
+        guard recordingDurationSeconds >= 2.5 else { return false }
+        let words = normalizedWords(text)
+        guard words.isEmpty == false else { return true }
+        let wordsPerSecond = Double(words.count) / recordingDurationSeconds
+        if recordingDurationSeconds < 4 { return wordsPerSecond < 1.0 }
+        return wordsPerSecond < 0.45
     }
 
     static func score(_ text: String) -> Double {
-        let words = normalizedWords(text)
+        let collapsed = collapsingRepeatedPhrase(text)
+        let words = normalizedWords(collapsed)
         guard words.isEmpty == false else { return -.infinity }
-        let substantiveCharacters = text.filter { $0.isLetter || $0.isNumber }.count
+        let substantiveCharacters = collapsed.filter { $0.isLetter || $0.isNumber }.count
         let repetitionPenalty = repeatedRunPenalty(words) * 4
-        let artifactPenalty = (text.contains("[") || text.contains("]")) ? 20 : 0
+        let artifactPenalty = (collapsed.contains("[") || collapsed.contains("]")) ? 20 : 0
         return Double(substantiveCharacters + min(words.count, 40) - repetitionPenalty - artifactPenalty)
+    }
+
+    /// Removes a decoder hallucination where an entire multi-word candidate is emitted
+    /// twice. Ordinary emphasis such as "very very" is intentionally left untouched.
+    static func collapsingRepeatedPhrase(_ text: String) -> String {
+        let tokens = text.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard tokens.count >= 8, tokens.count.isMultiple(of: 2) else { return text }
+        let midpoint = tokens.count / 2
+        let first = Array(tokens[..<midpoint])
+        let second = Array(tokens[midpoint...])
+        guard normalizedWords(first.joined(separator: " ")) == normalizedWords(second.joined(separator: " "))
+        else { return text }
+        return first.joined(separator: " ")
     }
 
     private static func normalizedWords(_ text: String) -> [String] {
@@ -502,16 +610,5 @@ private final class WhisperProcessExecution: @unchecked Sendable {
         stateLock.lock()
         defer { stateLock.unlock() }
         return cancellationRequested
-    }
-}
-
-private extension Data {
-    mutating func appendASCII(_ string: String) {
-        append(contentsOf: string.utf8)
-    }
-
-    mutating func appendLittleEndian<Value: FixedWidthInteger>(_ value: Value) {
-        var littleEndian = value.littleEndian
-        Swift.withUnsafeBytes(of: &littleEndian) { append(contentsOf: $0) }
     }
 }

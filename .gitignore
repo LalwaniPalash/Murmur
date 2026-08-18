@@ -58,3 +58,6 @@ coverage/
 # Release runtime binaries are staged locally before packaging.
 Vendor/Runtimes/*
 !Vendor/Runtimes/README.md
+.impeccable/
+.cursor/
+tasks/

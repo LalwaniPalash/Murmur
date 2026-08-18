@@ -1,310 +1,323 @@
 import AVFoundation
 import SwiftUI
 
+/// The Settings window keeps the native macOS tab chrome — this is the most
+/// convention-bound window in a Mac app, and fighting it would cost more than it buys.
+/// Everything inside a tab is panel language.
+///
+/// Thirteen sections became six. Shortcuts moved onto the panel's own legend, and the
+/// Models section was a card whose only content was a button to somewhere else.
 struct SettingsFeatureView: View {
     @EnvironmentObject private var environment: AppEnvironment
-    @State private var selectedSection: SettingsSection = .general
 
     var body: some View {
-        HStack(spacing: 0) {
-            List(SettingsSection.allCases, selection: $selectedSection) { section in
-                Label(section.title, systemImage: section.systemImage)
-                    .tag(section)
-            }
-            .listStyle(.sidebar)
-            .scrollContentBackground(.hidden)
-            .frame(width: 190)
-            .background(MurmurTheme.ColorToken.sidebar)
-
-            Divider()
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    PageHeader(title: selectedSection.title, subtitle: selectedSection.subtitle)
-                    settingsContent
-                }
-                .padding(MurmurTheme.Space.xLarge)
-                .frame(maxWidth: 760, alignment: .leading)
-            }
-            .background(MurmurTheme.ColorToken.canvas)
+        TabView {
+            GeneralSettings().tabItem { Label("General", systemImage: "gear") }
+            DictationSettings().tabItem { Label("Dictation", systemImage: "waveform") }
+            FlowBarSettings().tabItem { Label("Flow Bar", systemImage: "rectangle.inset.filled") }
+            PrivacySettings().tabItem { Label("Privacy", systemImage: "lock") }
+            StorageSettings().tabItem { Label("Storage", systemImage: "externaldrive") }
+            AdvancedSettings().tabItem { Label("Advanced", systemImage: "flask") }
         }
-        .preferredColorScheme(.light)
     }
+}
 
-    @ViewBuilder
-    private var settingsContent: some View {
-        switch selectedSection {
-        case .general:
-            MurmurCard {
-                LaunchAtLoginSettingView()
-                Divider().padding(.vertical, 8)
-                SettingsToggle(
-                    title: "Show Murmur in the menu bar",
-                    detail: "Open the Hub and Scratchpad from anywhere.",
-                    isOn: settingBinding(\.showMenuBarItem)
-                )
+// MARK: - Scaffold
+
+/// Every pane carries the same size so switching tabs never resizes the window, and the
+/// panel finish reaches the window edges instead of sitting as an island on system white.
+private struct SettingsPane<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: MurmurTheme.Space.large) {
+                content
             }
-        case .dictation:
-            MurmurCard {
-                SettingsToggle(
-                    title: "Remove fillers and false starts",
-                    detail: "Keep only your intended sentence.",
-                    isOn: settingBinding(\.removeSpeechArtifacts)
-                )
-                Divider().padding(.vertical, 8)
-                SettingsToggle(
-                    title: "Whisper-aware capture",
-                    detail: "Adapt the microphone threshold for quiet speech.",
-                    isOn: settingBinding(\.whisperAwareCapture)
-                )
-            }
-        case .languages:
-            MurmurCard {
-                LabeledContent("Primary language") { Text("English") }
-                Text("Additional languages will appear after they have dedicated quality evaluation.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(MurmurTheme.ColorToken.secondaryInk)
-            }
-        case .microphone:
-            MurmurCard {
-                LabeledContent("Input") { Text(defaultMicrophoneName) }
-                Divider().padding(.vertical, 8)
-                LabeledContent("Quiet-speech calibration") { Text("Adaptive each session") }
-            }
-        case .cleanup:
-            MurmurCard {
-                Picker(
-                    "Cleanup level",
-                    selection: Binding(
-                        get: { environment.settings.cleanupIntensity },
-                        set: { value in environment.updateSettings { $0.cleanupIntensity = value } }
-                    )
-                ) {
-                    ForEach(CleanupIntensity.allCases) { intensity in
-                        Text(intensity.title).tag(intensity)
+            .padding(MurmurTheme.Space.xLarge)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(width: 540, height: 420)
+        .background(MurmurTheme.Finish.panel)
+    }
+}
+
+@MainActor
+private func settingBinding(
+    _ environment: AppEnvironment,
+    _ keyPath: WritableKeyPath<MurmurSettingsRecord, Bool>
+) -> Binding<Bool> {
+    Binding(
+        get: { environment.settings[keyPath: keyPath] },
+        set: { value in environment.updateSettings { $0[keyPath: keyPath] = value } }
+    )
+}
+
+// MARK: - Panes
+
+private struct GeneralSettings: View {
+    @EnvironmentObject private var environment: AppEnvironment
+
+    var body: some View {
+        SettingsPane {
+            PanelSection(legend: "Startup") {
+                Plate {
+                    VStack(spacing: 0) {
+                        LaunchAtLoginSettingView()
+                        ScribeRule()
+                        PanelSwitch(
+                            legend: "Menu bar item",
+                            isOn: settingBinding(environment, \.showMenuBarItem)
+                        )
                     }
                 }
-                .pickerStyle(.segmented)
-                Text("Remove speech artifacts and improve structure without changing your meaning.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(MurmurTheme.ColorToken.secondaryInk)
             }
-        case .shortcuts:
-            MurmurCard {
-                ShortcutRow(title: "Dictate", shortcut: "fn")
-                Divider().padding(.vertical, 8)
-                ShortcutRow(title: "Command Mode", shortcut: "fn  control")
-                Divider().padding(.vertical, 8)
-                ShortcutRow(title: "Scratchpad", shortcut: "option  S")
-            }
-        case .flowBar:
-            MurmurCard {
-                SettingsToggle(
-                    title: "Show live audio movement",
-                    detail: "Use a waveform without revealing provisional text.",
-                    isOn: settingBinding(\.showLiveAudioMovement)
-                )
-                Divider().padding(.vertical, 8)
-                SettingsToggle(
-                    title: "Allow screen-edge docking",
-                    detail: "Remember the Flow Bar position per display.",
-                    isOn: settingBinding(\.allowFlowBarDocking)
-                )
-            }
-        case .notifications:
-            MurmurCard {
-                SettingsToggle(
-                    title: "Errors and recovery",
-                    detail: "Always show problems that require action.",
-                    isOn: settingBinding(\.errorNotifications)
-                )
-                Divider().padding(.vertical, 8)
-                SettingsToggle(
-                    title: "Milestones",
-                    detail: "Celebrate writing streaks locally.",
-                    isOn: settingBinding(\.milestoneNotifications)
-                )
-            }
-        case .privacy:
-            VStack(spacing: 12) {
-                MurmurCard {
-                    Label("Transcription and cleanup stay on this Mac.", systemImage: "lock.shield")
-                        .font(.system(size: 14, weight: .semibold))
-                    Text("Murmur has no cloud inference fallback. Temporary audio is discarded after processing by default.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(MurmurTheme.ColorToken.secondaryInk)
-                }
-                DiagnosticsSettingsView(environment: environment)
-            }
-        case .storage:
-            VStack(spacing: 12) {
-                MurmurCard {
-                    LabeledContent("History") { Text("Encrypted locally") }
-                    Divider().padding(.vertical, 8)
-                    SettingsToggle(
-                        title: "Retain raw audio",
-                        detail: "Off by default. Audio never leaves this Mac.",
-                        isOn: settingBinding(\.retainRawAudio)
-                    )
-                }
-                StorageTransferSettingsView(environment: environment)
-            }
-        case .models:
-            MurmurCard {
-                VStack(alignment: .leading, spacing: 12) {
-                    Label("Transcription models now have their own workspace.", systemImage: "cpu")
-                        .font(.system(size: 14, weight: .semibold))
-                    Text("Compare speed and quality, download verified models, switch the active model, or reclaim storage from the Models page.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(MurmurTheme.ColorToken.secondaryInk)
-                    Button("Open Models") { environment.selectedDestination = .models }
-                        .buttonStyle(MurmurPrimaryButtonStyle())
+
+            PanelSection(legend: "Notifications") {
+                Plate {
+                    VStack(spacing: 0) {
+                        PanelSwitch(
+                            legend: "Errors",
+                            detail: "Problems that need you to do something.",
+                            isOn: settingBinding(environment, \.errorNotifications)
+                        )
+                        ScribeRule()
+                        PanelSwitch(
+                            legend: "Milestones",
+                            isOn: settingBinding(environment, \.milestoneNotifications)
+                        )
+                    }
                 }
             }
-        case .experimental:
-            MurmurCard {
-                SettingsToggle(
-                    title: "Command Mode",
-                    detail: "Transform selected text with a spoken instruction.",
-                    isOn: settingBinding(\.commandModeEnabled)
-                )
-                Divider().padding(.vertical, 8)
-                SettingsToggle(
-                    title: "Local workspace tagging",
-                    detail: "Resolve spoken file names inside approved folders.",
-                    isOn: settingBinding(\.workspaceTaggingEnabled)
-                )
-            }
-        case .about:
-            MurmurCard {
-                Text("Murmur")
-                    .font(.system(size: 20, weight: .semibold, design: .rounded))
-                Text("Private voice writing for macOS")
-                    .foregroundStyle(MurmurTheme.ColorToken.secondaryInk)
+
+            PanelSection(legend: "Build") {
+                Plate {
+                    VStack(spacing: 0) {
+                        SpecLine(legend: "Version", value: Self.version)
+                        ScribeRule()
+                        SpecLine(legend: "Transcription", value: "On this Mac")
+                        ScribeRule()
+                        SpecLine(legend: "Writing", value: writingRouteLabel)
+                    }
+                }
             }
         }
     }
 
-    private func settingBinding(_ keyPath: WritableKeyPath<MurmurSettingsRecord, Bool>) -> Binding<Bool> {
-        Binding(
-            get: { environment.settings[keyPath: keyPath] },
-            set: { value in environment.updateSettings { $0[keyPath: keyPath] = value } }
-        )
+    private static var version: String {
+        let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+        return short ?? "dev"
     }
 
-    private var defaultMicrophoneName: String {
+    private var writingRouteLabel: String {
+        switch environment.settings.writing.route {
+        case .deterministic: "Deterministic"
+        case .openAI: "OpenAI · your key"
+        case .openAICompatible: "Compatible · your key"
+        case .localMLX: "Local model"
+        }
+    }
+}
+
+private struct DictationSettings: View {
+    @EnvironmentObject private var environment: AppEnvironment
+
+    var body: some View {
+        SettingsPane {
+            PanelSection(legend: "Capture") {
+                Plate {
+                    VStack(spacing: 0) {
+                        PanelSwitch(
+                            legend: "Whisper-aware",
+                            detail: "Adapts the threshold for quiet speech.",
+                            isOn: settingBinding(environment, \.whisperAwareCapture)
+                        )
+                        ScribeRule()
+                        SpecLine(legend: "Input", value: Self.defaultMicrophoneName)
+                        ScribeRule()
+                        SpecLine(legend: "Calibration", value: "Adaptive")
+                        ScribeRule()
+                        SpecLine(legend: "Language", value: "English")
+                    }
+                }
+            }
+
+            PanelSection(legend: "Correction") {
+                Plate {
+                    VStack(alignment: .leading, spacing: MurmurTheme.Space.medium) {
+                        PanelSwitch(
+                            legend: "Remove fillers and false starts",
+                            isOn: settingBinding(environment, \.removeSpeechArtifacts)
+                        )
+                        ScribeRule()
+                        VStack(alignment: .leading, spacing: MurmurTheme.Space.small) {
+                            Legend("Strength", size: .micro, color: MurmurTheme.Engraving.tertiary)
+                            Picker(
+                                "",
+                                selection: Binding(
+                                    get: { environment.settings.cleanupIntensity },
+                                    set: { value in
+                                        environment.updateSettings { $0.cleanupIntensity = value }
+                                    }
+                                )
+                            ) {
+                                ForEach(CleanupIntensity.allCases) { intensity in
+                                    Text(intensity.title).tag(intensity)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.segmented)
+                            .accessibilityLabel("Cleanup strength")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private static var defaultMicrophoneName: String {
         AVCaptureDevice.default(for: .audio)?.localizedName ?? "System default"
     }
 }
 
-private enum SettingsSection: String, CaseIterable, Identifiable {
-    case general, dictation, languages, microphone, cleanup, shortcuts, flowBar, notifications, privacy, storage, models, experimental, about
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .general: "General"
-        case .dictation: "Dictation"
-        case .languages: "Languages"
-        case .microphone: "Microphone"
-        case .cleanup: "Cleanup"
-        case .shortcuts: "Shortcuts"
-        case .flowBar: "Flow Bar"
-        case .notifications: "Notifications"
-        case .privacy: "Privacy"
-        case .storage: "Storage"
-        case .models: "Models"
-        case .experimental: "Experimental"
-        case .about: "About"
-        }
-    }
-
-    var subtitle: String {
-        switch self {
-        case .general: "Choose how Murmur behaves on your Mac."
-        case .dictation: "Control what happens between speaking and insertion."
-        case .languages: "Set the language Murmur expects to hear."
-        case .microphone: "Select and calibrate your input device."
-        case .cleanup: "Decide how strongly Murmur refines your words."
-        case .shortcuts: "Reach every voice mode without leaving your work."
-        case .flowBar: "Tune the floating feedback shown while you speak."
-        case .notifications: "Choose which local updates deserve attention."
-        case .privacy: "Review how your voice and writing stay private."
-        case .storage: "Manage local history, audio, and backups."
-        case .models: "Install and verify local transcription and cleanup models."
-        case .experimental: "Try local features that are still being refined."
-        case .about: "Version, acknowledgements, and support information."
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .general: "gear"
-        case .dictation: "waveform"
-        case .languages: "globe"
-        case .microphone: "mic"
-        case .cleanup: "wand.and.stars"
-        case .shortcuts: "keyboard"
-        case .flowBar: "capsule"
-        case .notifications: "bell"
-        case .privacy: "lock"
-        case .storage: "externaldrive"
-        case .models: "cpu"
-        case .experimental: "flask"
-        case .about: "info.circle"
-        }
-    }
-}
-
-private struct SettingsToggle: View {
-    let title: String
-    let detail: String
-    @State private var isOn: Bool
-    private let externalBinding: Binding<Bool>?
-
-    init(title: String, detail: String, initialValue: Bool = false) {
-        self.title = title
-        self.detail = detail
-        _isOn = State(initialValue: initialValue)
-        externalBinding = nil
-    }
-
-    init(title: String, detail: String, isOn: Binding<Bool>) {
-        self.title = title
-        self.detail = detail
-        _isOn = State(initialValue: isOn.wrappedValue)
-        externalBinding = isOn
-    }
+private struct FlowBarSettings: View {
+    @EnvironmentObject private var environment: AppEnvironment
 
     var body: some View {
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.system(size: 13, weight: .semibold))
-                Text(detail)
-                    .font(.system(size: 12))
-                    .foregroundStyle(MurmurTheme.ColorToken.secondaryInk)
+        SettingsPane {
+            PanelSection(legend: "Flow Bar") {
+                Plate {
+                    VStack(spacing: 0) {
+                        PanelSwitch(
+                            legend: "Live level meter",
+                            detail: "Shows input level. Never shows unfinished words.",
+                            isOn: settingBinding(environment, \.showLiveAudioMovement)
+                        )
+                        ScribeRule()
+                        PanelSwitch(
+                            legend: "Edge docking",
+                            detail: "Remembers position per display.",
+                            isOn: settingBinding(environment, \.allowFlowBarDocking)
+                        )
+                    }
+                }
             }
-            Spacer()
-            Toggle("", isOn: externalBinding ?? $isOn).labelsHidden()
         }
     }
 }
 
-private struct ShortcutRow: View {
-    let title: String
-    let shortcut: String
+private struct PrivacySettings: View {
+    @EnvironmentObject private var environment: AppEnvironment
 
     var body: some View {
-        HStack {
-            Text(title).font(.system(size: 13, weight: .medium))
-            Spacer()
-            Text(shortcut)
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                .padding(.horizontal, 9)
-                .padding(.vertical, 5)
-                .background(MurmurTheme.ColorToken.sidebar)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+        SettingsPane {
+            PanelSection(legend: "Processing") {
+                Plate {
+                    VStack(spacing: 0) {
+                        SpecLine(legend: "Transcription", value: "This Mac", lamp: .verify, isLit: true)
+                        ScribeRule()
+                        SpecLine(legend: "Writing", value: writingLocation, lamp: .verify, isLit: true)
+                        ScribeRule()
+                        SpecLine(legend: "Cloud fallback", value: "None")
+                        ScribeRule()
+                        SpecLine(legend: "Telemetry", value: "None")
+                    }
+                }
+            }
+
+            DiagnosticsSettingsView(environment: environment)
+        }
+    }
+
+    private var writingLocation: String {
+        switch environment.settings.writing.route {
+        case .openAI: "OpenAI · your key"
+        case .openAICompatible: "Configured provider"
+        case .localMLX, .deterministic: "This Mac"
+        }
+    }
+}
+
+private struct StorageSettings: View {
+    @EnvironmentObject private var environment: AppEnvironment
+    @State private var proposedDisabledPolicy = false
+
+    var body: some View {
+        SettingsPane {
+            PanelSection(legend: "On this Mac") {
+                Plate {
+                    VStack(spacing: 0) {
+                        SpecLine(legend: "History", value: "Encrypted", lamp: .verify, isLit: true)
+                        ScribeRule()
+                        VStack(alignment: .leading, spacing: MurmurTheme.Space.small) {
+                            Legend("Encrypted recording retention", size: .micro, color: MurmurTheme.Engraving.tertiary)
+                            Picker(
+                                "Retention",
+                                selection: Binding(
+                                    get: { environment.settings.audioRetentionPolicy },
+                                    set: { policy in
+                                        if policy == .disabled,
+                                           environment.settings.audioRetentionPolicy.isEnabled {
+                                            proposedDisabledPolicy = true
+                                        } else {
+                                            environment.setAudioRetentionPolicy(policy)
+                                        }
+                                    }
+                                )
+                            ) {
+                                ForEach(AudioRetentionPolicy.allCases) { policy in
+                                    Text(policy.title).tag(policy)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.menu)
+                            Text("Off by default. Seven days is suggested. Audio never leaves this Mac.")
+                                .font(MurmurFace.body(11))
+                                .foregroundStyle(MurmurTheme.Engraving.secondary)
+                        }
+                    }
+                }
+            }
+
+            StorageTransferSettingsView(environment: environment)
+        }
+        .confirmationDialog(
+            "Disable retention and permanently delete all retained recordings?",
+            isPresented: $proposedDisabledPolicy,
+            titleVisibility: .visible
+        ) {
+            Button("Disable and delete recordings", role: .destructive) {
+                environment.setAudioRetentionPolicy(.disabled)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Transcript history will remain. Encrypted audio cannot be recovered after deletion.")
+        }
+    }
+}
+
+private struct AdvancedSettings: View {
+    @EnvironmentObject private var environment: AppEnvironment
+
+    var body: some View {
+        SettingsPane {
+            PanelSection(legend: "In progress", note: "Local features still being refined.") {
+                Plate {
+                    VStack(spacing: 0) {
+                        PanelSwitch(
+                            legend: "Command Mode",
+                            detail: "Transform selected text with a spoken instruction.",
+                            isOn: settingBinding(environment, \.commandModeEnabled)
+                        )
+                        ScribeRule()
+                        PanelSwitch(
+                            legend: "Workspace tagging",
+                            detail: "Resolve spoken file names inside approved folders.",
+                            isOn: settingBinding(environment, \.workspaceTaggingEnabled)
+                        )
+                    }
+                }
+            }
         }
     }
 }

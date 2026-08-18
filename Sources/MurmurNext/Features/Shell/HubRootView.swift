@@ -5,7 +5,9 @@ struct HubRootView: View {
 
     var body: some View {
         Group {
-            if environment.hasCompletedOnboarding {
+            if FlowBarStateGallery.isEnabled {
+                FlowBarStateGallery()
+            } else if environment.hasCompletedOnboarding {
                 hub
             } else {
                 OnboardingView(
@@ -16,168 +18,193 @@ struct HubRootView: View {
                 )
             }
         }
-        .background(MurmurTheme.ColorToken.canvas)
-        .preferredColorScheme(.light)
+        .background(MurmurTheme.Finish.panel)
         .overlay(alignment: .top) {
             if let message = environment.persistenceError {
-                HStack(spacing: 10) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(MurmurTheme.ColorToken.warning)
-                    Text(message)
-                        .font(.system(size: 12, weight: .medium))
-                        .lineLimit(2)
-                    Spacer()
-                    Button {
-                        environment.clearPresentedError()
-                    } label: {
-                        Image(systemName: "xmark")
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Dismiss error")
-                }
-                .padding(.horizontal, 14)
-                .frame(minHeight: 42)
-                .background(MurmurTheme.ColorToken.surfaceRaised)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .overlay { RoundedRectangle(cornerRadius: 10).stroke(MurmurTheme.ColorToken.line) }
-                .shadow(color: .black.opacity(0.10), radius: 12, y: 5)
-                .padding(.top, 12)
-                .padding(.horizontal, 20)
-                .transition(.move(edge: .top).combined(with: .opacity))
+                FaultStrip(message: message, dismiss: environment.clearPresentedError)
             }
         }
     }
 
     private var hub: some View {
         HStack(spacing: 0) {
-            HubSidebar(selection: $environment.selectedDestination)
-                .frame(width: 218)
+            LegendColumn(selection: $environment.selectedDestination)
+                .frame(width: 194)
             Rectangle()
-                .fill(MurmurTheme.ColorToken.line)
-                .frame(width: 1)
+                .fill(MurmurTheme.Engraving.scribeStrong)
+                .frame(width: MurmurTheme.Space.hairline)
             destinationView
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(MurmurTheme.ColorToken.canvas)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .background(MurmurTheme.Finish.panel)
         }
     }
 
     @ViewBuilder
     private var destinationView: some View {
         switch environment.selectedDestination {
-        case .home:
-            HomeFeatureView(environment: environment)
-        case .dictionary:
-            DictionaryFeatureView(environment: environment)
-        case .snippets:
-            SnippetsFeatureView(environment: environment)
-        case .style:
-            StyleFeatureView(environment: environment)
+        case .record:
+            RecordFeatureView(environment: environment)
+        case .vocabulary:
+            VocabularyFeatureView(environment: environment)
+        case .engine:
+            EngineFeatureView(environment: environment)
         case .scratchpad:
             ScratchpadLandingView(environment: environment)
-        case .models:
-            ModelsFeatureView(environment: environment)
-        case .settings:
-            SettingsFeatureView()
-        case .help:
-            HelpFeatureView()
         }
     }
 }
 
-private struct HubSidebar: View {
+// MARK: - Legend column
+
+/// The chassis the panel is bolted to. Destinations are engraved legends that seat when
+/// selected, not pills that fill with colour.
+private struct LegendColumn: View {
     @Binding var selection: HubDestination
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
-                MurmurGlyph()
-                Text("Murmur")
-                    .font(.system(size: 16, weight: .semibold, design: .rounded))
-                    .foregroundStyle(MurmurTheme.ColorToken.ink)
+            HStack(spacing: MurmurTheme.Space.small) {
+                MurmurMark()
+                Legend("Murmur", size: .section)
             }
-            .padding(.horizontal, 18)
-            .padding(.top, 20)
-            .padding(.bottom, 26)
+            .padding(.horizontal, MurmurTheme.Space.large)
+            .padding(.top, MurmurTheme.Space.xLarge)
+            .padding(.bottom, MurmurTheme.Space.large)
 
-            VStack(spacing: 3) {
-                ForEach([HubDestination.home, .dictionary, .snippets, .style, .scratchpad, .models]) { destination in
-                    SidebarButton(destination: destination, selection: $selection)
+            ScribeRule()
+                .padding(.horizontal, MurmurTheme.Space.large)
+
+            VStack(spacing: 1) {
+                ForEach(HubDestination.allCases) { destination in
+                    LegendButton(destination: destination, selection: $selection)
                 }
             }
-            .padding(.horizontal, 10)
+            .padding(.horizontal, MurmurTheme.Space.small)
+            .padding(.top, MurmurTheme.Space.medium)
 
-            Spacer()
+            Spacer(minLength: MurmurTheme.Space.large)
 
-            VStack(spacing: 3) {
-                SidebarButton(destination: .settings, selection: $selection)
-                SidebarButton(destination: .help, selection: $selection)
-            }
-            .padding(.horizontal, 10)
-            .padding(.bottom, 12)
+            ShortcutLegend()
+                .padding(.horizontal, MurmurTheme.Space.large)
+                .padding(.bottom, MurmurTheme.Space.large)
         }
-        .background(MurmurTheme.ColorToken.sidebar)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(MurmurTheme.Finish.chassis)
     }
 }
 
-private struct SidebarButton: View {
+private struct LegendButton: View {
     let destination: HubDestination
     @Binding var selection: HubDestination
+    @State private var isHovering = false
+
+    private var isSelected: Bool { selection == destination }
 
     var body: some View {
-        Button {
-            selection = destination
-        } label: {
-            HStack(spacing: 11) {
+        Button { selection = destination } label: {
+            HStack(spacing: MurmurTheme.Space.medium) {
+                Rectangle()
+                    .fill(isSelected ? MurmurTheme.Engraving.ink : .clear)
+                    .frame(width: 2)
+                    .frame(maxHeight: .infinity)
                 Image(systemName: destination.systemImage)
-                    .font(.system(size: 13, weight: .medium))
-                    .frame(width: 18)
-                Text(destination.title)
-                    .font(.system(size: 13, weight: selection == destination ? .semibold : .medium))
-                Spacer()
+                    .font(.system(size: 12, weight: .medium))
+                    .frame(width: 16)
+                Legend(
+                    destination.title,
+                    size: .control,
+                    color: isSelected ? MurmurTheme.Engraving.ink : MurmurTheme.Engraving.secondary
+                )
+                Spacer(minLength: 0)
             }
-            .foregroundStyle(MurmurTheme.ColorToken.ink.opacity(selection == destination ? 1 : 0.72))
-            .padding(.horizontal, 10)
-            .frame(height: 36)
-            .background(selection == destination ? MurmurTheme.ColorToken.selected : .clear)
-            .clipShape(RoundedRectangle(cornerRadius: MurmurTheme.Radius.small, style: .continuous))
+            .foregroundStyle(isSelected ? MurmurTheme.Engraving.ink : MurmurTheme.Engraving.secondary)
+            .padding(.trailing, MurmurTheme.Space.medium)
+            .frame(height: 32)
+            .background(seat)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
         .accessibilityLabel(destination.title)
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
-}
 
-private struct MurmurGlyph: View {
-    var body: some View {
-        HStack(alignment: .center, spacing: 2) {
-            ForEach([8.0, 14.0, 19.0, 12.0, 7.0], id: \.self) { height in
-                Capsule()
-                    .fill(MurmurTheme.ColorToken.ink)
-                    .frame(width: 2.2, height: height)
-            }
+    @ViewBuilder
+    private var seat: some View {
+        if isSelected {
+            RoundedRectangle(cornerRadius: MurmurTheme.Edge.control, style: .continuous)
+                .fill(MurmurTheme.Finish.seat)
+        } else if isHovering {
+            RoundedRectangle(cornerRadius: MurmurTheme.Edge.control, style: .continuous)
+                .fill(MurmurTheme.Finish.seat.opacity(0.45))
         }
-        .frame(width: 25, height: 25)
-        .accessibilityHidden(true)
     }
 }
 
-private struct HelpFeatureView: View {
+/// A real device prints its key legend on the faceplate. This replaces the Help page.
+private struct ShortcutLegend: View {
+    private let entries: [(String, String)] = [
+        ("Dictate", "fn"),
+        ("Command", "⌃ fn"),
+        ("Cancel", "esc"),
+        ("Scratchpad", "⌥S")
+    ]
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: MurmurTheme.Space.large) {
-                PageHeader(title: "Help", subtitle: "Learn the shortcuts and resolve common setup issues.")
-                MurmurCard {
-                    VStack(alignment: .leading, spacing: 14) {
-                        Label("Hold your dictation shortcut and speak naturally.", systemImage: "keyboard")
-                        Label("Whispering works best within an arm's length of your microphone.", systemImage: "waveform")
-                        Label("Murmur only inserts text after local correction is complete.", systemImage: "checkmark.seal")
-                    }
-                    .font(.system(size: 13))
-                    .foregroundStyle(MurmurTheme.ColorToken.secondaryInk)
+        VStack(alignment: .leading, spacing: MurmurTheme.Space.small) {
+            ScribeRule()
+            ForEach(entries, id: \.0) { entry in
+                HStack(spacing: MurmurTheme.Space.small) {
+                    Legend(entry.0, size: .micro, color: MurmurTheme.Engraving.tertiary)
+                    Spacer(minLength: MurmurTheme.Space.small)
+                    Text(entry.1)
+                        .font(MurmurFace.readout(10, weight: .medium))
+                        .foregroundStyle(MurmurTheme.Engraving.secondary)
                 }
             }
-            .padding(MurmurTheme.Space.xLarge)
-            .frame(maxWidth: 920, alignment: .leading)
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Keyboard shortcuts")
+    }
+}
+
+// MARK: - Fault strip
+
+private struct FaultStrip: View {
+    let message: String
+    let dismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: MurmurTheme.Space.medium) {
+            Lamp(colour: .caution, isLit: true)
+            Text(message)
+                .font(MurmurFace.body(12))
+                .foregroundStyle(MurmurTheme.Engraving.ink)
+                .lineLimit(2)
+            Spacer(minLength: MurmurTheme.Space.medium)
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(MurmurTheme.Engraving.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss")
+        }
+        .padding(.horizontal, MurmurTheme.Space.large)
+        .frame(minHeight: 38)
+        .background(
+            RoundedRectangle(cornerRadius: MurmurTheme.Edge.plate, style: .continuous)
+                .fill(MurmurTheme.Finish.plate)
+                .shadow(color: .black.opacity(0.22), radius: 10, x: 0, y: 4)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: MurmurTheme.Edge.plate, style: .continuous)
+                .strokeBorder(MurmurTheme.Engraving.scribeStrong, lineWidth: MurmurTheme.Space.hairline)
+        )
+        .padding(.top, MurmurTheme.Space.medium)
+        .padding(.horizontal, MurmurTheme.Space.large)
+        .transition(.move(edge: .top).combined(with: .opacity))
     }
 }

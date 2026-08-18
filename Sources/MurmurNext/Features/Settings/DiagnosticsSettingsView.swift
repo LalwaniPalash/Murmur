@@ -8,26 +8,35 @@ struct DiagnosticsSettingsView: View {
     @State private var status = ""
 
     var body: some View {
-        MurmurCard {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Diagnostics export")
-                    .font(.system(size: 14, weight: .semibold))
-                Text("The default report includes only system information, counts, and installed model names. You can inspect the JSON before sharing it.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(MurmurTheme.ColorToken.secondaryInk)
-                Toggle("Include dictated and note content", isOn: $includePrivateContent)
-                    .font(.system(size: 12, weight: .medium))
-                if includePrivateContent {
-                    Label("Private writing will be included in clear text.", systemImage: "exclamationmark.triangle.fill")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(MurmurTheme.ColorToken.warning)
-                }
-                Button("Export diagnostics…", action: export)
-                    .buttonStyle(MurmurSecondaryButtonStyle())
-                if status.isEmpty == false {
-                    Text(status)
-                        .font(.system(size: 11))
-                        .foregroundStyle(MurmurTheme.ColorToken.secondaryInk)
+        PanelSection(
+            legend: "Diagnostics",
+            note: "The report carries system information, counts, and model names. Inspect the JSON before you send it anywhere."
+        ) {
+            Plate {
+                VStack(alignment: .leading, spacing: MurmurTheme.Space.medium) {
+                    PanelSwitch(
+                        legend: "Include my writing",
+                        isOn: $includePrivateContent
+                    )
+                    if includePrivateContent {
+                        HStack(spacing: MurmurTheme.Space.small) {
+                            Lamp(colour: .caution, isLit: true)
+                            Text("Dictated text and notes will be written in clear text.")
+                                .font(MurmurFace.body(11.5))
+                                .foregroundStyle(MurmurTheme.Engraving.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    ScribeRule()
+                    HStack(spacing: MurmurTheme.Space.medium) {
+                        Button("Export", action: export)
+                            .buttonStyle(PanelButtonStyle(rank: .secondary))
+                        if status.isEmpty == false {
+                            Text(status)
+                                .font(MurmurFace.body(11.5))
+                                .foregroundStyle(MurmurTheme.Engraving.tertiary)
+                        }
+                    }
                 }
             }
         }

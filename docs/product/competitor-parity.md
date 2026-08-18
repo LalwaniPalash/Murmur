@@ -26,12 +26,13 @@ implementation. Stable feature IDs link to [the feature ledger](feature-ledger.m
 | Capability | Competitor examples | Murmur now | Target | Murmur advantage |
 |---|---|---|---|---|
 | Full history | VoiceInk, Handy, TypeWhisper, OpenWhispr, Willow | Yes | HIST-001–008 | Encrypted content and processing provenance |
-| Saved recording playback | VoiceInk, Handy, TypeWhisper, Willow | Opt-in primitive | REC-002/HIST-005, F2 | Per-file encryption and automatic expiration |
-| Retry failed transcription | Willow, TypeWhisper, OpenWhispr | No | REC-004–007, F2 | Retry against immutable source audio |
-| Retranscribe old recording | VoiceInk, Willow, Superwhisper | No | REC-007, F2 | Versioned results instead of overwrite |
-| Compare models/providers | Limited or manual elsewhere | No | REC-008–009, F2 | Aligned A/B diff with latency and route provenance |
-| Recover interrupted sessions | Willow, TypeWhisper | No | REC-004, F2 | Encrypted crash-safe source with explicit retention |
-| Recording retention controls | VoiceInk, Handy, TypeWhisper | Basic | REC-001–003, F2 | Off by default, suggested seven days, crypto-shredding |
+| Saved recording playback | VoiceInk, Handy, TypeWhisper, Willow | Yes, opt-in | REC-002/HIST-005, F2 | Per-recording encryption, authenticated playback, and automatic expiration |
+| Retry failed transcription | Willow, TypeWhisper, OpenWhispr | Yes, local | REC-004–007, F2 | Retry authenticated source audio without automatic reinsertion |
+| Retranscribe old recording | VoiceInk, Willow, Superwhisper | Yes, local | REC-007, F2 | Parented immutable results instead of overwrite |
+| Compare models/providers | Limited or manual elsewhere | Local models | REC-008–009, F2 | Arbitrary aligned A/B diff with latency and route provenance |
+| Recover interrupted sessions | Willow, TypeWhisper | Yes | REC-004, F2 | Encrypted phase journal and partial authenticated-chunk recovery |
+| Recording retention controls | VoiceInk, Handy, TypeWhisper | Advanced | REC-001–003, F2 | Off by default, explicit expiry, per-record keys, and crypto-shredding |
+| Redacted issue export | Rare in direct competitors | Yes | REC-010, F2 | Preview-first metadata with transcript and audio independently off by default |
 | Searchable history | Most competitors | Yes | HIST-002/006 | Keyed blind-index search over encrypted records |
 | Cross-device history | Wispr Flow/cloud products | No | SYNC-001–003, F6 | User-owned encrypted synchronization |
 
@@ -42,7 +43,7 @@ implementation. Stable feature IDs link to [the feature ledger](feature-ledger.m
 | Local Whisper | VoiceInk, Handy, TypeWhisper, Superwhisper, MacWhisper | Yes | TRN-001–002 | Resident runtime and one authoritative full pass |
 | Multiple local engine families | Handy, TypeWhisper, MacWhisper | No | MOD-004/PLUG-001, F6 | Capability contracts and measured recommendations |
 | Cloud transcription | All major commercial products; several OSS apps | No | TRN-008–010, F3 | BYOK, explicit audio scope, no Murmur-hosted relay |
-| OpenAI-compatible endpoints | TypeWhisper | No | BYOK-002, F3 | Capability probing and contract fixtures |
+| OpenAI-compatible endpoints | TypeWhisper | Writing only; manual pending | BYOK-002, F3 | Captured endpoint, fixed-content connection check, and contract fixtures |
 | Local/cloud fallback | VoiceInk, TypeWhisper, OpenWhispr | No | PROF-006, F3 | Only the user-declared ordered policy can run |
 | Model verification | Handy and Murmur | Yes | MOD-002–003 | Full digest and atomic activation |
 | Model recommendations | Superwhisper, TypeWhisper | Basic | MOD-005, F3 | Hardware- and corpus-measured guidance |
@@ -63,13 +64,13 @@ implementation. Stable feature IDs link to [the feature ledger](feature-ledger.m
 |---|---|---|---|---|
 | Filler/repetition cleanup | Nearly all | Yes | CORR-001–004 | Deterministic and regression-corpus tested |
 | Natural spoken corrections | Wispr, Willow, Aqua, Superwhisper | Yes | CORR-004 | Complete utterance repair across pauses |
-| AI cleanup | VoiceInk, Handy, TypeWhisper, OpenWhispr, commercial apps | No | CORR-007, F3 | Protected-detail grounding and provenance |
+| AI cleanup | VoiceInk, Handy, TypeWhisper, OpenWhispr, commercial apps | Implemented; manual pending | CORR-007/CORR-011, F3 | BYOK or local route with protected-detail validation, complete-source fallback, and provenance |
 | Personal dictionary | Nearly all | Yes | PERS-001 | Encrypted storage, prompt validation, portable bundle |
 | Snippets/shortcuts | Wispr, Willow, VoiceInk, OpenWhispr | Yes | PERS-002 | Deterministic expansion and collision handling |
 | Automatic correction learning | Wispr, Willow, TypeWhisper, OpenWhispr | No | CORR-008–010, F3 | Reliable localized edits enter a review queue |
 | Writing-style learning | Wispr, Willow, Aqua | No | PERS-003/PROF, F3 | Explicit rules and review instead of opaque global adaptation |
-| Application context | VoiceInk, Wispr, Superwhisper, Aqua, Willow | No | CTX-001, F3 | Profile-scoped and inspectable |
-| Browser/site context | TypeWhisper, Wispr | No | CTX-002, F3 | Bounded URL permissions and deterministic matching |
+| Application context | VoiceInk, Wispr, Superwhisper, Aqua, Willow | Mail Email mode | CTX-001, F3 | Captured identity, exact off switch, and immutable routing policy |
+| Browser/site context | TypeWhisper, Wispr | Gmail only; manual pending | CTX-002, F3 | Local exact-host classification with no URL retention or transmission |
 | Selected/nearby text | Superwhisper, Aqua, Willow | Command selection only | CTX-003–004, F3 | Separate local/cloud context disclosure |
 | Whole-screen context | Aqua and some commercial products | No | Not default | Prefer bounded accessible context over screen capture |
 
@@ -77,9 +78,9 @@ implementation. Stable feature IDs link to [the feature ledger](feature-ledger.m
 
 | Capability | Competitor examples | Murmur now | Target | Murmur advantage |
 |---|---|---|---|---|
-| Built-in writing modes | VoiceInk, Superwhisper, Wispr, Aqua | Plain/command only | MODE-001–008, F3 | Each mode declares route, context, and grounding policy |
+| Built-in writing modes | VoiceInk, Superwhisper, Wispr, Aqua | Plain, Command, Email; manual pending | MODE-001–008, F3 | Generative results are grounded and fall back without partial insertion |
 | Custom modes/instructions | VoiceInk, Superwhisper, TypeWhisper, Aqua | No | MODE-008, F3 | Previewable, portable, and evidence-gated |
-| App-specific profiles | VoiceInk, TypeWhisper, Superwhisper | No | PROF-001–007, F3 | Deterministic precedence and captured session policy |
+| App-specific profiles | VoiceInk, TypeWhisper, Superwhisper | Mail/Gmail switches | PROF-001–007, F3 | Deterministic precedence and captured session policy; general profiles remain |
 | Website-specific profiles | TypeWhisper | No | PROF-003, F3 | Cross-browser domain rules with explicit permission |
 | Voice commands | Wispr, Aqua, Superwhisper | Command Mode | FLOW-008/MODE, F3 | Commands cannot mutate selection before safe completion |
 | Auto-submit | TypeWhisper, Aqua | No | PROF-007, F3 | App-scoped and insertion-verified |

@@ -182,4 +182,6 @@ F2.1 completion.
 - Raw and final text plus minimal route provenance survive encrypted backup/restore.
 - Failed insertion remains locally recoverable.
 - No persistence failure can duplicate inserted text.
-- HIST-003, HIST-004, and REC-007 move to Current only after all gates pass.
+- Update each feature status from shipped evidence: HIST-003 can move to Current; HIST-004
+  and REC-007 remain Partial until processing-profile provenance and the user-facing
+  re-transcription/provider flow ship.

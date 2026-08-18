@@ -36,8 +36,9 @@ struct MurmurNextApp: App {
         }
 
         Settings {
+            // No frame here: the panes carry the one authoritative size, so the window
+            // sizes to the panel instead of matting it inside a larger empty window.
             SettingsFeatureView()
-                .frame(width: 720, height: 560)
                 .environmentObject(environment)
         }
     }

@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-04  
 **Design:** [F3 transformation routing and automatic Email mode](2026-08-04-f3-transformation-routing-design.md)  
-**Status:** Approved design; implementation ready  
+**Status:** Implementation complete — automated release gates in progress; manual matrix pending
 **Priority:** completeness/correctness, latency, privacy, feature breadth
 
 ## Outcome
@@ -12,6 +12,29 @@ OpenAI-compatible endpoint, or a separately installed local MLX writing model. M
 Gmail automatically apply safe professional Email mode after consent, and Command mode can
 perform semantic selected-text transformations. Murmur hosts nothing and inserts the complete
 deterministic result whenever an AI transformation is unavailable or fails validation.
+
+## Implementation Progress — 2026-08-04
+
+- Slices 1–2: captured policy/settings and provider-independent validator with golden corpora pass.
+- Slice 3: Keychain credential storage, endpoint policy, and mocked OpenAI Responses adapter pass.
+- Slice 4: pinned MLX dependencies, exact Qwen snapshot manifest, verified explicit installer,
+  in-process local-only runner, fake-runner tests, and an opt-in real-model harness pass compilation.
+  The real-model harness remains unrun until the owner explicitly installs the 351,383,618-byte
+  model and sets `MURMUR_RUN_LOCAL_WRITING_MODEL_TESTS=1`.
+- Slice 5: consented local-only Gmail classification uses exact HTTPS host matching across the
+  declared browser set and retains only the broad Email classification.
+- Slice 6: the production orchestrator routes only the complete deterministic result, validates
+  every candidate, records content-free provenance and latency, and preserves the complete Email
+  source or unchanged Command selection on failure.
+- Slice 7: the Engine page exposes OpenAI and Responses-compatible BYOK configuration, Keychain
+  save/replace/delete, fixed-content connection testing, separate text scopes, explicit local-model
+  install/cancel/remove, and Mail/Gmail off switches.
+- Slice 8: network/privacy allowlists and backward schema coverage pass. The opt-in real local-model
+  test, real provider calls, application behavior, and signed-app UI remain manual gates.
+- Final automated boundary: 260 tests in 61 suites pass; debug and arm64 release builds pass;
+  privacy and declared-network audits pass; the signed app/DMG package verifies. The quality gate
+  is incomplete, not failed, because the manual insertion rows and compatible checked benchmark
+  baseline remain intentionally unrun.
 
 ## Constraints
 

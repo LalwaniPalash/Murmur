@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "semantic-concision",
+      "source": "I think that this proposal is really very useful for the launch.",
+      "candidate": "This proposal is useful for the launch.",
+      "operation": "semanticCommand",
+      "protectedTerms": [],
+      "expectedValid": true
+    },
+    {
+      "id": "concision-preserves-address-and-budget",
+      "source": "I think the final budget is $9,500 and updates should go to launch@example.com.",
+      "candidate": "The final budget is $9,500; send updates to launch@example.com.",
+      "operation": "semanticCommand",
+      "protectedTerms": [],
+      "expectedValid": true
+    },
+    {
+      "id": "command-drops-protected-link",
+      "source": "Please shorten the explanation but keep https://example.com/spec.",
+      "candidate": "Shorten the explanation.",
+      "operation": "semanticCommand",
+      "protectedTerms": [],
+      "expectedValid": false
+    }
+  ]
+}
