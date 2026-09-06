@@ -163,6 +163,16 @@ Before uploading a DMG manually to GitHub Releases, commit your changes and run:
 script/check_release.sh
 ```
 
+That check ends by launching the packaged app with `.build/arm64-apple-macosx/release`
+moved aside, and fails if it exits. The step matters because SwiftPM's `Bundle.module`
+for an executable target searches a hardcoded absolute build path — a resource missing
+from the `.app` stays invisible on the machine that built it and only breaks once that
+directory is cleaned. `MurmurNext` therefore resolves its own resource bundle from
+`Bundle.main.resourceURL` rather than using `Bundle.module`.
+
+Neither script installs the result. `dist/Murmur.app` has to be copied over
+`/Applications/Murmur.app` by hand to update the app you actually run.
+
 ## First use
 
 1. Open Murmur and review the local-processing privacy explanation.
