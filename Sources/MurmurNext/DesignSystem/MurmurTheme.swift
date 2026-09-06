@@ -24,11 +24,25 @@ import SwiftUI
 /// The engraved legend voice. Archivo Condensed ships with the app under the OFL;
 /// the system condensed width is the fallback when the resource bundle is missing.
 enum MurmurFace {
+    /// SwiftPM's generated `Bundle.module` for an *executable* target searches only the
+    /// `.app` root and the absolute build directory. A packaged app carries the bundle in
+    /// `Contents/Resources` instead, and `Bundle.module` traps rather than returning nil,
+    /// so the system-face fallback below could never run. Resolve the bundle ourselves.
+    private static let resourceBundle: Bundle? = {
+        let name = "Murmur_MurmurNext.bundle"
+        return [Bundle.main.resourceURL, Bundle.main.bundleURL]
+            .compactMap { $0?.appendingPathComponent(name) }
+            .lazy
+            .compactMap { Bundle(url: $0) }
+            .first
+    }()
+
     private static let isRegistered: Bool = {
+        guard let bundle = resourceBundle else { return false }
         var registeredAny = false
         for name in ["ArchivoCondensed-Medium", "ArchivoCondensed-SemiBold"] {
-            let url = Bundle.module.url(forResource: name, withExtension: "ttf", subdirectory: "Fonts")
-                ?? Bundle.module.url(forResource: name, withExtension: "ttf")
+            let url = bundle.url(forResource: name, withExtension: "ttf", subdirectory: "Fonts")
+                ?? bundle.url(forResource: name, withExtension: "ttf")
             guard let url else { continue }
             if CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil) {
                 registeredAny = true

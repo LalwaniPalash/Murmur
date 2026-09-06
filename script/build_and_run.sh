@@ -94,8 +94,9 @@ chmod +x "$APP_HELPERS/MurmurMLXWorker"
 cp "$MLX_METALLIB" "$APP_HELPERS/mlx.metallib"
 cp -R "$MLX_RESOURCE_BUNDLE" "$APP_RESOURCES/"
 # The bundled Archivo Condensed legend face travels in a SwiftPM resource bundle.
-# It goes in Contents/Resources rather than beside the binary: that is one of the
-# paths Bundle.module searches, and codesign rejects a .bundle inside Contents/MacOS.
+# It goes in Contents/Resources because codesign rejects a .bundle inside Contents/MacOS.
+# Note SwiftPM's Bundle.module does NOT search there for an executable target; MurmurFace
+# resolves the bundle itself. See Sources/MurmurNext/DesignSystem/MurmurTheme.swift.
 for resource_bundle in "$BUILD_PRODUCTS_DIR"/*.bundle; do
   [[ -d "$resource_bundle" ]] || continue
   rm -rf "$APP_RESOURCES/$(basename "$resource_bundle")"
